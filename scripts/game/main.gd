@@ -50,10 +50,10 @@ func _setup_lighting() -> void:
 
 func _setup_camera() -> void:
 	var camera := Camera3D.new()
-	# Pull back far enough to see the full 5-wide board
-	camera.position = Vector3(0.0, 14.0, 11.0)
-	camera.rotation_degrees = Vector3(-52.0, 0.0, 0.0)
+	camera.position = Vector3(0.0, 8.5, 7.5)
 	add_child(camera)
+	# Shift look target slightly toward camera so the full board is centered
+	camera.look_at(Vector3(0.0, 0.0, 0.8), Vector3.UP)
 
 # --- Board ---
 
