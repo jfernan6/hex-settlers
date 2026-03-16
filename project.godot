@@ -1,0 +1,26 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Hex Settlers"
+config/description="A 3D Catan-inspired board game built with Godot 4."
+config/version="0.1.0"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.6", "Forward Plus")
+config/run/main_scene="res://scenes/main.tscn"
+
+[editor]
+
+version_control/vcs_plugin="Git"
+
+[rendering]
+
+renderer/rendering_method.mobile="forward_plus"
