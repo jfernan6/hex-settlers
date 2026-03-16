@@ -51,6 +51,7 @@ func generate(parent: Node3D) -> void:
 	tokens.shuffle()
 
 	var token_index := 0
+	var terrain_tally: Dictionary = {}
 
 	for i in positions.size():
 		var q: int = positions[i].x
@@ -63,9 +64,24 @@ func generate(parent: Node3D) -> void:
 			token_index += 1
 
 		_spawn_tile(parent, q, r, terrain, number)
+		terrain_tally[terrain] = terrain_tally.get(terrain, 0) + 1
 
 		var token_str := "(%d)" % number if number > 0 else "(desert)"
-		print("Tile [q=%d, r=%d]  %-10s %s" % [q, r, TERRAIN_NAMES[terrain], token_str])
+		print("  Tile [q=%2d, r=%2d]  %-10s %s" % [q, r, TERRAIN_NAMES[terrain], token_str])
+
+	# --- Validation summary ---
+	print("[BOARD] --- Terrain summary ---")
+	var all_ok := true
+	for t in TERRAIN_COUNTS:
+		var expected: int = TERRAIN_COUNTS[t]
+		var actual: int = terrain_tally.get(t, 0)
+		var status := "OK" if actual == expected else "ERROR — expected %d got %d" % [expected, actual]
+		if actual != expected:
+			all_ok = false
+		print("  %-10s: %d  [%s]" % [TERRAIN_NAMES[t], actual, status])
+	print("[BOARD] Tokens assigned : %d  %s" % [token_index, "OK" if token_index == 18 else "ERROR — expected 18"])
+	print("[BOARD] Total tiles     : %d  %s" % [positions.size(), "OK" if positions.size() == 19 else "ERROR — expected 19"])
+	print("[BOARD] Validation      : %s" % ("PASSED" if all_ok and token_index == 18 else "FAILED"))
 
 
 func _build_shuffled_terrains() -> Array:

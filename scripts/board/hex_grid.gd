@@ -18,6 +18,20 @@ static func get_board_positions() -> Array[Vector2i]:
 		positions.append(pos)
 	for pos in _get_ring_positions(2):
 		positions.append(pos)
+
+	# Validate: catch duplicates early
+	var seen: Dictionary = {}
+	var duplicates := 0
+	for p in positions:
+		var key := "%d,%d" % [p.x, p.y]
+		if key in seen:
+			print("[HEXGRID] ERROR: Duplicate position q=%d r=%d!" % [p.x, p.y])
+			duplicates += 1
+		seen[key] = true
+	print("[HEXGRID] Positions: %d total, %d unique  [%s]" % [
+		positions.size(), seen.size(),
+		"OK" if duplicates == 0 and positions.size() == 19 else "ERROR"
+	])
 	return positions
 
 ## Converts axial coordinates (q, r) to a 3D world position (flat-top).

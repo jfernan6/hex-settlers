@@ -1,11 +1,12 @@
 extends Node3D
 
 func _ready() -> void:
+	print("=== [INIT] Hex Settlers starting ===")
 	_setup_environment()
 	_setup_lighting()
 	_setup_camera()
 	_generate_board()
-	print("=== Hex Settlers: Phase 2 loaded ===")
+	print("=== [DONE] Scene ready ===")
 
 	# Debug mode: pass `-- --debug-screenshot` on the command line to auto-screenshot and quit
 	if "--debug-screenshot" in OS.get_cmdline_user_args():
@@ -23,10 +24,12 @@ func _input(event: InputEvent) -> void:
 
 func _take_screenshot() -> void:
 	var timestamp := Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
-	var path := "res://debug-screenshots/run_%s.png" % timestamp
 	var img := get_viewport().get_texture().get_image()
-	img.save_png(path)
-	print("Screenshot saved → debug-screenshots/run_%s.png" % timestamp)
+	# Timestamped copy for history
+	img.save_png("res://debug-screenshots/run_%s.png" % timestamp)
+	# Fixed filename so Claude can always read res://debug-screenshots/latest_run.png directly
+	img.save_png("res://debug-screenshots/latest_run.png")
+	print("[SCREENSHOT] run_%s.png  +  latest_run.png" % timestamp)
 
 # --- Setup ---
 
@@ -40,6 +43,7 @@ func _setup_environment() -> void:
 	env.ambient_light_energy = 0.4
 	world_env.environment = env
 	add_child(world_env)
+	print("[SETUP] Environment OK  (bg=sky-blue, ambient=0.4)")
 
 func _setup_lighting() -> void:
 	var sun := DirectionalLight3D.new()
@@ -47,16 +51,19 @@ func _setup_lighting() -> void:
 	sun.light_energy = 1.5
 	sun.shadow_enabled = true
 	add_child(sun)
+	print("[SETUP] Lighting OK     (DirectionalLight3D energy=1.5, shadows=true)")
 
 func _setup_camera() -> void:
 	var camera := Camera3D.new()
 	camera.position = Vector3(0.0, 8.5, 7.5)
 	add_child(camera)
-	# Shift look target slightly toward camera so the full board is centered
 	camera.look_at(Vector3(0.0, 0.0, 0.8), Vector3.UP)
+	print("[SETUP] Camera OK       (pos=%s  look_at=(0,0,0.8))" % camera.position)
 
 # --- Board ---
 
 func _generate_board() -> void:
+	print("[BOARD] Starting board generation...")
 	var generator := BoardGenerator.new()
 	generator.generate(self)
+	print("[BOARD] Children in scene: %d" % get_child_count())
