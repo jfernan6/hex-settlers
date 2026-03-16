@@ -1,0 +1,40 @@
+# Godot 4 — auto-generated files (never commit these)
+.godot/
+
+# Godot import metadata (regenerated per machine)
+*.import
+
+# Godot export presets (contains platform-specific paths)
+export_presets.cfg
+
+# Mono/C# build artifacts (not using C# but just in case)
+.mono/
+data_*/
+mono_crash.*.json
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Editor backups
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Environment / secrets (never commit these)
+.env
+.env.local
+
+# Large binary assets (download separately per CLAUDE.md instructions)
+# Uncomment if needed:
+# assets/models/*.glb
+# assets/models/*.fbx
