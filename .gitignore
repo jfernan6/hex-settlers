@@ -27,6 +27,10 @@ desktop.ini
 *.swo
 *~
 
+# Debug screenshots and logs (auto-generated, don't commit)
+debug-screenshots/*.png
+debug-screenshots/*.log
+
 # Logs
 *.log
 
