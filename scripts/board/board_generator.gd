@@ -2,6 +2,8 @@ class_name BoardGenerator
 
 ## Generates the 19-tile Catan board with randomized terrain and number tokens.
 
+const HexGrid = preload("res://scripts/board/hex_grid.gd")
+
 enum TerrainType {
 	FOREST,    # Lumber
 	HILLS,     # Brick

@@ -1,12 +1,20 @@
 extends Node3D
 
+# Preload all scripts — class_name global registry only works in editor mode,
+# so command-line / debug runs require explicit preload() for cross-script references.
+const BoardGenerator = preload("res://scripts/board/board_generator.gd")
+const HexGrid        = preload("res://scripts/board/hex_grid.gd")
+const HexVertices    = preload("res://scripts/board/hex_vertices.gd")
+const VertexSlot     = preload("res://scripts/board/vertex_slot.gd")
+
 func _ready() -> void:
-	print("=== [INIT] Hex Settlers starting ===")
+	print("=== [INIT] Hex Settlers — Phase 3 starting ===")
 	_setup_environment()
 	_setup_lighting()
 	_setup_camera()
 	_generate_board()
-	print("=== [DONE] Scene ready ===")
+	_create_vertex_slots()
+	print("=== [DONE] Scene ready — total children: %d ===" % get_child_count())
 
 	# Debug mode: pass `-- --debug-screenshot` on the command line to auto-screenshot and quit
 	if "--debug-screenshot" in OS.get_cmdline_user_args():
@@ -66,4 +74,22 @@ func _generate_board() -> void:
 	print("[BOARD] Starting board generation...")
 	var generator := BoardGenerator.new()
 	generator.generate(self)
-	print("[BOARD] Children in scene: %d" % get_child_count())
+	print("[BOARD] Tiles spawned. Scene children: %d" % get_child_count())
+
+
+func _create_vertex_slots() -> void:
+	print("[VERTEX] Creating vertex slots...")
+	var positions := HexVertices.get_all_positions(HexGrid.get_board_positions())
+	for pos in positions:
+		var slot := VertexSlot.new()
+		slot.position = pos
+		slot.slot_clicked.connect(_on_vertex_slot_clicked)
+		add_child(slot)
+	print("[VERTEX] %d vertex slots added. Scene children: %d" % [positions.size(), get_child_count()])
+
+
+# --- Player interaction ---
+
+func _on_vertex_slot_clicked(slot) -> void:
+	slot.occupy(Color(0.85, 0.12, 0.12))  # Player 1 = red for now
+	print("[GAME] Settlement placed → total children: %d" % get_child_count())
