@@ -22,7 +22,7 @@ const GodModePanel      = preload("res://scripts/ui/god_mode_panel.gd")
 
 var _state: RefCounted
 var _hud:   CanvasLayer
-var _robber: MeshInstance3D
+var _robber: Node3D   # hooded figure root (was MeshInstance3D sphere)
 var _god_panel: CanvasLayer  # God Mode overlay (F4 to toggle)
 
 var _vertex_slots: Array = []
@@ -235,18 +235,83 @@ func _create_edge_slots() -> void:
 
 
 func _create_robber() -> void:
-	_robber = MeshInstance3D.new()
-	_robber.name = "Robber"
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.28
-	sphere.height = 0.56
-	_robber.mesh = sphere
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.10, 0.10, 0.10)
-	_robber.material_override = mat
-	add_child(_robber)
+	# Hooded figure: cloak base (wide cone) + body + head
+	var root := Node3D.new()
+	root.name = "Robber"
+
+	var dark := Color(0.06, 0.04, 0.10)   # very dark purple-black
+
+	# Cloak — wide flat cone at bottom
+	var cloak := MeshInstance3D.new()
+	var cloak_m := CylinderMesh.new()
+	cloak_m.top_radius = 0.18; cloak_m.bottom_radius = 0.38
+	cloak_m.height = 0.42; cloak_m.radial_segments = 8
+	cloak.mesh = cloak_m
+	cloak.position = Vector3(0, 0.21, 0)
+	cloak.material_override = _robber_mat(dark, 0.85, 0.05)
+	root.add_child(cloak)
+
+	# Body — narrow cylinder
+	var body := MeshInstance3D.new()
+	var body_m := CylinderMesh.new()
+	body_m.top_radius = 0.12; body_m.bottom_radius = 0.16
+	body_m.height = 0.30; body_m.radial_segments = 8
+	body.mesh = body_m
+	body.position = Vector3(0, 0.55, 0)
+	body.material_override = _robber_mat(dark, 0.85, 0.05)
+	root.add_child(body)
+
+	# Hood — sphere head
+	var head := MeshInstance3D.new()
+	var head_m := SphereMesh.new()
+	head_m.radius = 0.14; head_m.height = 0.28
+	head.mesh = head_m
+	head.position = Vector3(0, 0.77, 0)
+	head.material_override = _robber_mat(dark, 0.8, 0.05)
+	root.add_child(head)
+
+	# Pointed hat — dark red/crimson cone on top
+	var hat := MeshInstance3D.new()
+	var hat_m := CylinderMesh.new()
+	hat_m.top_radius = 0.0; hat_m.bottom_radius = 0.14
+	hat_m.height = 0.28; hat_m.radial_segments = 8
+	hat.mesh = hat_m
+	hat.position = Vector3(0, 0.96, 0)
+	hat.material_override = _robber_mat(Color(0.55, 0.05, 0.05), 0.8, 0.1)
+	root.add_child(hat)
+
+	# Glowing red eyes
+	for eye_x in [-0.055, 0.055]:
+		var eye := MeshInstance3D.new()
+		var eye_m := SphereMesh.new()
+		eye_m.radius = 0.03; eye_m.height = 0.06
+		eye.mesh = eye_m
+		eye.position = Vector3(eye_x, 0.77, -0.12)
+		var em := StandardMaterial3D.new()
+		em.albedo_color    = Color(1.0, 0.1, 0.1)
+		em.emission_enabled = true
+		em.emission        = Color(1.0, 0.1, 0.1)
+		em.emission_energy_multiplier = 3.0
+		eye.material_override = em
+		root.add_child(eye)
+
+	_robber = MeshInstance3D.new()  # proxy kept for glow system compatibility
+	_robber.name = "RobberProxy"
+	_robber.visible = false
+	root.add_child(_robber)
+
+	add_child(root)
+	_robber = root  # reassign so glow + position updates work on the root
 	_update_robber_position()
-	print("[ROBBER] Robber created at %s" % _state.robber_tile_key)
+	Log.info("[ROBBER] Hooded robber created at %s" % _state.robber_tile_key)
+
+
+func _robber_mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness    = roughness
+	mat.metallic     = metallic
+	return mat
 
 
 func _update_robber_position() -> void:
@@ -562,17 +627,24 @@ func _set_tile_robber_highlight(active: bool) -> void:
 			mat.emission_energy_multiplier = 0.4
 
 
-## Robber sphere pulses red during ROBBER_MOVE.
+## Robber hooded figure pulses red during ROBBER_MOVE.
 func _set_robber_glow(active: bool) -> void:
 	if _robber == null:
 		return
-	var mat: StandardMaterial3D = _robber.material_override
-	if mat == null:
-		return
-	mat.emission_enabled = active
-	if active:
-		mat.emission = Color(0.9, 0.1, 0.1)
-		mat.emission_energy_multiplier = 2.0
+	# Recursively set emission on all MeshInstance3D children of the robber root
+	_set_node_emission(_robber, active)
+
+
+func _set_node_emission(node: Node, active: bool) -> void:
+	if node is MeshInstance3D and node.material_override is StandardMaterial3D:
+		var mat: StandardMaterial3D = node.material_override
+		if mat.albedo_color != Color(1.0, 0.1, 0.1):  # skip glowing red eyes
+			mat.emission_enabled = active
+			if active:
+				mat.emission = Color(0.9, 0.1, 0.1)
+				mat.emission_energy_multiplier = 1.2
+	for child in node.get_children():
+		_set_node_emission(child, active)
 
 
 ## Ray-cast mouse click → nearest tile center. Replaces Area3D tile picking.

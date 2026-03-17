@@ -77,12 +77,12 @@ func _build_ui() -> void:
 	scroll.add_child(vbox)
 
 	# === HEADER ===
-	var hdr := _lbl("  GOD MODE  ", 18)
+	var hdr := _lbl("  GOD MODE  ", _font_size + 8)
 	hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hdr.modulate = Color(1.0, 0.80, 0.10)
 	vbox.add_child(hdr)
 
-	_player_label = _lbl("Player: —", 12)
+	_player_label = _lbl("Player: —", _font_size)
 	_player_label.modulate = Color(0.70, 0.70, 0.70)
 	vbox.add_child(_player_label)
 	vbox.add_child(_sep())
@@ -163,15 +163,15 @@ func set_player_name(name: String, color: Color) -> void:
 # ---------------------------------------------------------------
 
 func _section(title: String) -> Label:
-	var l := _lbl(title, 12)
+	var l := _lbl(title, _font_size + 1)
 	l.modulate = Color(0.80, 0.70, 0.25)
 	return l
 
 
-func _lbl(text: String, size: int) -> Label:
+func _lbl(text: String, size: int = -1) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", size if size > 0 else _font_size)
 	return l
 
 
@@ -181,22 +181,22 @@ func _sep() -> HSeparator:
 	return s
 
 
-## Small resource button (compact)
+## Small resource button (compact) — uses viewport-scaled font
 func _rbtn(text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.add_theme_font_size_override("font_size", 11)
-	b.custom_minimum_size = Vector2(0, 26)
+	b.add_theme_font_size_override("font_size", _font_size)
+	b.custom_minimum_size = Vector2(0, int(_font_size * 2.2))
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.pressed.connect(cb)
 	return b
 
 
-## Wide action button
+## Wide action button — uses viewport-scaled font
 func _wbtn(text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.add_theme_font_size_override("font_size", 13)
-	b.custom_minimum_size = Vector2(0, 34)
+	b.add_theme_font_size_override("font_size", _font_size + 2)
+	b.custom_minimum_size = Vector2(0, int((_font_size + 2) * 2.4))
 	b.pressed.connect(cb)
 	return b

@@ -345,9 +345,27 @@ func _spawn_sea_frame(parent: Node3D) -> void:
 		mesh.rings = 1
 		tile.mesh = mesh
 
+		# Sea tile: deep blue base + white foam rim on top for visual depth
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = SEA_PBR.c
 		mat.roughness    = SEA_PBR.r
 		mat.metallic     = SEA_PBR.m
+		mat.emission_enabled = true
+		mat.emission = Color(0.02, 0.12, 0.28)
+		mat.emission_energy_multiplier = 0.35
 		tile.material_override = mat
 		container.add_child(tile)
+
+		# White foam ring on top of sea tile for visual interest
+		var foam := MeshInstance3D.new()
+		var fm := CylinderMesh.new()
+		fm.top_radius = 0.88; fm.bottom_radius = 0.92; fm.height = 0.04
+		fm.radial_segments = 10
+		foam.mesh = fm
+		foam.position = Vector3(0, 0.12, 0)
+		var foam_mat := StandardMaterial3D.new()
+		foam_mat.albedo_color = Color(0.90, 0.94, 1.0, 0.8)
+		foam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		foam_mat.roughness    = 0.3
+		foam.material_override = foam_mat
+		container.add_child(foam)
