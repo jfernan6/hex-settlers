@@ -46,7 +46,9 @@ const NUMBER_TOKENS: Array = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11,
 
 
 ## Spawns all 19 hex tiles as children of `parent`.
-func generate(parent: Node3D) -> void:
+## Returns a Dictionary mapping "q,r" -> {terrain, number, center, q, r}
+## so game logic can look up which tiles a settlement is adjacent to.
+func generate(parent: Node3D) -> Dictionary:
 	var positions := HexGrid.get_board_positions()
 	var terrains := _build_shuffled_terrains()
 	var tokens := NUMBER_TOKENS.duplicate()
@@ -54,6 +56,7 @@ func generate(parent: Node3D) -> void:
 
 	var token_index := 0
 	var terrain_tally: Dictionary = {}
+	var tile_data: Dictionary = {}  # "q,r" -> {terrain, number, center}
 
 	for i in positions.size():
 		var q: int = positions[i].x
@@ -67,6 +70,15 @@ func generate(parent: Node3D) -> void:
 
 		_spawn_tile(parent, q, r, terrain, number)
 		terrain_tally[terrain] = terrain_tally.get(terrain, 0) + 1
+
+		# Store tile data for game logic (resource collection etc.)
+		tile_data["%d,%d" % [q, r]] = {
+			"terrain": terrain,
+			"number": number,
+			"center": HexGrid.axial_to_world(q, r),
+			"q": q,
+			"r": r,
+		}
 
 		var token_str := "(%d)" % number if number > 0 else "(desert)"
 		print("  Tile [q=%2d, r=%2d]  %-10s %s" % [q, r, TERRAIN_NAMES[terrain], token_str])
@@ -84,6 +96,8 @@ func generate(parent: Node3D) -> void:
 	print("[BOARD] Tokens assigned : %d  %s" % [token_index, "OK" if token_index == 18 else "ERROR — expected 18"])
 	print("[BOARD] Total tiles     : %d  %s" % [positions.size(), "OK" if positions.size() == 19 else "ERROR — expected 19"])
 	print("[BOARD] Validation      : %s" % ("PASSED" if all_ok and token_index == 18 else "FAILED"))
+
+	return tile_data
 
 
 func _build_shuffled_terrains() -> Array:
