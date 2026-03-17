@@ -83,17 +83,19 @@ func generate(parent: Node3D) -> Dictionary:
 			number = tokens[token_index]
 			token_index += 1
 
-		var area := _spawn_tile(parent, q, r, terrain, number)
+		var spawn_result: Array = _spawn_tile(parent, q, r, terrain, number)
+		var area: Area3D = spawn_result[0]
+		var tile_mesh: MeshInstance3D = spawn_result[1]
 		terrain_tally[terrain] = terrain_tally.get(terrain, 0) + 1
 
-		# Store tile data for game logic (resource collection, robber, etc.)
 		tile_data["%d,%d" % [q, r]] = {
 			"terrain": terrain,
-			"number": number,
-			"center": HexGrid.axial_to_world(q, r),
+			"number":  number,
+			"center":  HexGrid.axial_to_world(q, r),
 			"q": q,
 			"r": r,
-			"area": area,  # Area3D for robber click detection
+			"area": area,      # Area3D (kept for legacy; robber uses ray casting now)
+			"mesh": tile_mesh, # MeshInstance3D for visual highlighting
 		}
 
 		var token_str := "(%d)" % number if number > 0 else "(desert)"
@@ -125,8 +127,8 @@ func _build_shuffled_terrains() -> Array:
 	return terrains
 
 
-## Spawns one tile. Returns its Area3D so main.gd can connect robber signals.
-func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> Area3D:
+## Spawns one tile. Returns [Area3D, MeshInstance3D].
+func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> Array:
 	# Container groups mesh + label + collision under one node
 	var container := Node3D.new()
 	container.name = "Tile_%d_%d" % [q, r]
@@ -188,7 +190,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		pip_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
 		container.add_child(pip_label)
 
-	return area
+	return [area, tile]
 
 
 # ---------------------------------------------------------------

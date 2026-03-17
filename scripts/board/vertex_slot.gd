@@ -36,16 +36,19 @@ func _build_all_meshes() -> void:
 	# 1. Disc — visible when slot is empty
 	_disc = MeshInstance3D.new()
 	var dm := CylinderMesh.new()
-	dm.top_radius    = 0.19
-	dm.bottom_radius = 0.19
-	dm.height        = 0.04
-	dm.radial_segments = 10
+	dm.top_radius    = 0.26
+	dm.bottom_radius = 0.26
+	dm.height        = 0.06
+	dm.radial_segments = 12
 	dm.rings = 1
 	_disc.mesh = dm
 	_mat_disc = StandardMaterial3D.new()
-	_mat_disc.albedo_color = Color(0.95, 0.95, 0.95, 0.75)
-	_mat_disc.roughness    = 0.4
-	_mat_disc.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_mat_disc.albedo_color = Color(1.0, 0.98, 0.85)  # warm white — visible on dark table
+	_mat_disc.roughness    = 0.3
+	_mat_disc.emission_enabled = true
+	_mat_disc.emission = Color(0.9, 0.85, 0.5)        # subtle golden glow
+	_mat_disc.emission_energy_multiplier = 0.5
+	_mat_disc.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	_disc.material_override = _mat_disc
 	add_child(_disc)
 
@@ -98,12 +101,16 @@ func _on_input_event(_camera: Camera3D, event: InputEvent, _pos: Vector3, _norma
 
 func _on_hover_start() -> void:
 	if not is_occupied:
-		_mat_disc.albedo_color = Color(1.0, 0.95, 0.2, 0.9)
+		_mat_disc.albedo_color = Color(1.0, 0.95, 0.1)
+		_mat_disc.emission = Color(1.0, 0.8, 0.0)
+		_mat_disc.emission_energy_multiplier = 1.5
 
 
 func _on_hover_end() -> void:
 	if not is_occupied:
-		_mat_disc.albedo_color = Color(0.95, 0.95, 0.95, 0.75)
+		_mat_disc.albedo_color = Color(1.0, 0.98, 0.85)
+		_mat_disc.emission = Color(0.9, 0.85, 0.5)
+		_mat_disc.emission_energy_multiplier = 0.5
 
 
 # ---------------------------------------------------------------

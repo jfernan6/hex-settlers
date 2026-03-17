@@ -274,14 +274,21 @@ func _refresh_hud() -> void:
 			else:
 				_hud.set_message("%s: place a road adjacent to your new settlement" % p.player_name)
 		GameState.Phase.ROLL:
-			_hud.set_message("%s: press Roll Dice" % _state.current_player().player_name)
+			_hud.set_message("%s: press Roll Dice to produce resources" % _state.current_player().player_name)
 		GameState.Phase.BUILD:
-			_hud.set_message(
-				"%s rolled %d — place settlement/road/city or End Turn" % [
-				_state.current_player().player_name, _state.last_roll])
+			var roll_str := " (rolled %d)" % _state.last_roll if _state.last_roll > 0 else ""
+			if _state.current_player().is_ai:
+				_hud.set_message("%s (AI) is taking their turn%s..." % [
+					_state.current_player().player_name, roll_str])
+			else:
+				_hud.set_message("%s%s — click gold dots to build settlements, blue bars for roads, or use the buttons" % [
+					_state.current_player().player_name, roll_str])
 		GameState.Phase.ROBBER_MOVE:
-			_hud.set_message("%s: rolled 7 — click a tile to move the robber!" % [
-				_state.current_player().player_name])
+			var p_name: String = _state.current_player().player_name
+			if _state.current_player().is_ai:
+				_hud.set_message("%s (AI) is moving the robber..." % p_name)
+			else:
+				_hud.set_message("%s: click any tile to move the robber there" % p_name)
 		GameState.Phase.GAME_OVER:
 			var w = _state.players[_state.winner_index]
 			_hud.set_message("*** %s WINS with %d VP! ***" % [w.player_name, w.victory_points])
@@ -319,6 +326,12 @@ func _on_vertex_slot_clicked(slot: Object) -> void:
 			if _state.try_place_city(player, slot.position):
 				slot.upgrade_to_city(player.color)
 				_refresh_hud()
+			elif player.city_positions.size() >= _state.MAX_CITIES:
+				_hud.set_message("City limit reached (max %d cities)" % _state.MAX_CITIES)
+			else:
+				_hud.set_message("Need 2 Grain + 3 Ore to upgrade to city  (have Grain:%d Ore:%d)" % [
+					player.resources.get(PlayerData.RES_GRAIN, 0),
+					player.resources.get(PlayerData.RES_ORE, 0)])
 		return
 
 	# --- Paid settlement (BUILD phase) ---
@@ -329,7 +342,10 @@ func _on_vertex_slot_clicked(slot: Object) -> void:
 	if _state.try_place_settlement(player, slot.position):
 		slot.occupy(player.color, pidx)
 		_refresh_hud()
-	Log.debug("[GAME] Post-placement phase: %s" % _state.phase_name())
+	elif not _state._respects_distance_rule(slot.position):
+		_hud.set_message("Too close to another settlement — must leave at least 1 road gap")
+	else:
+		_hud.set_message("Need 1 Lumber + 1 Brick + 1 Wool + 1 Grain to build a settlement")
 
 
 # ---------------------------------------------------------------
@@ -355,8 +371,16 @@ func _on_edge_slot_clicked(slot: Object) -> void:
 		if is_setup_road:
 			_state.setup_road_placed()
 		_refresh_hud()
-	else:
-		_refresh_hud()
+	elif not is_setup_road:
+		# Give specific reason for failure
+		var player_road_count: int = _state.roads.filter(
+			func(r): return r.player_index == pidx).size()
+		if player_road_count >= _state.MAX_ROADS:
+			_hud.set_message("Road limit reached (max %d roads)" % _state.MAX_ROADS)
+		elif not _state._road_is_connected(player, pidx, slot.v1, slot.v2):
+			_hud.set_message("Road must connect to your existing settlements or roads")
+		else:
+			_hud.set_message("Need 1 Lumber + 1 Brick to build a road")
 
 
 ## Called when setup sub-phase changes (settlement→road) to trigger AI road placement.
@@ -397,8 +421,89 @@ func _on_tile_input(key: String, _cam: Object, event: InputEvent, _pos: Vector3,
 
 
 func _set_tile_picking(enabled: bool) -> void:
+	# Disable vertex/edge slots during ROBBER_MOVE so they don't interfere.
+	# Tile picking itself is now handled by _unhandled_input() ray casting.
+	for slot in _vertex_slots:
+		slot.input_ray_pickable = not enabled
+	for slot in _edge_slots:
+		slot.input_ray_pickable = not enabled
+	# Visual: make tiles glow when robber mode is active
+	_set_tile_robber_highlight(enabled)
+	# Make robber sphere pulse red
+	_set_robber_glow(enabled)
+
+
+## Tile emissive highlight — warm glow on all tiles during ROBBER_MOVE.
+func _set_tile_robber_highlight(active: bool) -> void:
 	for key in _state.tile_data:
-		_state.tile_data[key].area.input_ray_pickable = enabled
+		var mesh: MeshInstance3D = _state.tile_data[key].get("mesh")
+		if mesh == null or not (mesh.material_override is StandardMaterial3D):
+			continue
+		var mat: StandardMaterial3D = mesh.material_override
+		mat.emission_enabled = active
+		if active:
+			mat.emission = Color(0.6, 0.5, 0.1)   # warm yellow "click me" glow
+			mat.emission_energy_multiplier = 0.4
+
+
+## Robber sphere pulses red during ROBBER_MOVE.
+func _set_robber_glow(active: bool) -> void:
+	if _robber == null:
+		return
+	var mat: StandardMaterial3D = _robber.material_override
+	if mat == null:
+		return
+	mat.emission_enabled = active
+	if active:
+		mat.emission = Color(0.9, 0.1, 0.1)
+		mat.emission_energy_multiplier = 2.0
+
+
+## Ray-cast mouse click → nearest tile center. Replaces Area3D tile picking.
+func _unhandled_input(event: InputEvent) -> void:
+	if _state.phase != GameState.Phase.ROBBER_MOVE:
+		return
+	if _state.current_player().is_ai:
+		return
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	var mouse_pos: Vector2 = get_viewport().get_mouse_position()
+	var ray_origin: Vector3 = camera.project_ray_origin(mouse_pos)
+	var ray_dir:    Vector3 = camera.project_ray_normal(mouse_pos)
+
+	# Intersect with ground plane y=0 (tiles sit at y=0..0.25)
+	if abs(ray_dir.y) < 0.001:
+		return
+	var t: float = -ray_origin.y / ray_dir.y
+	if t < 0.0:
+		return
+	var hit: Vector3 = ray_origin + ray_dir * t
+
+	# Find closest tile center within 1.5×HEX_SIZE radius
+	var best_key := ""
+	var best_dist: float = HexGrid.HEX_SIZE * 1.5
+	for key in _state.tile_data:
+		var c: Vector3 = _state.tile_data[key].center
+		var d: float   = Vector2(hit.x - c.x, hit.z - c.z).length()
+		if d < best_dist:
+			best_dist = d
+			best_key  = key
+
+	if best_key == "":
+		_hud.set_message("Click directly on a tile to place the robber")
+		return
+	if best_key == _state.robber_tile_key:
+		_hud.set_message("Robber is already on that tile — choose a different one")
+		return
+
+	_set_tile_picking(false)
+	_state.move_robber(best_key)
+	_update_robber_position()
+	_refresh_hud()
 
 
 # ---------------------------------------------------------------
@@ -462,6 +567,9 @@ func _process_ai_turn() -> void:
 					Log.error("[AI] No setup road slot found adjacent to %s" % _state.last_setup_pos)
 		GameState.Phase.ROLL:
 			_on_roll_dice()
+			# If 7 was rolled, AI needs another timer tick to handle ROBBER_MOVE
+			if _state.phase == GameState.Phase.ROBBER_MOVE:
+				_ai_timer.start()
 		GameState.Phase.ROBBER_MOVE:
 			var key: String = AIPlayer.pick_robber_tile(_state, _state.current_player_index)
 			if key != "":
@@ -505,7 +613,17 @@ func _process_ai_turn() -> void:
 
 func _try_buy_dev_card() -> void:
 	var player = _state.current_player()
+	if _state.dev_deck.is_empty():
+		_hud.set_message("The development card deck is empty!")
+		return
+	if not _state._has_resources(player, _state.DEV_COST):
+		_hud.set_message("Need 1 Ore + 1 Grain + 1 Wool to buy a dev card  (you have Ore:%d Grain:%d Wool:%d)" % [
+			player.resources.get(PlayerData.RES_ORE, 0),
+			player.resources.get(PlayerData.RES_GRAIN, 0),
+			player.resources.get(PlayerData.RES_WOOL, 0)])
+		return
 	if _state.buy_dev_card(player):
+		_hud.set_message("Dev card purchased!")
 		_refresh_hud()
 
 

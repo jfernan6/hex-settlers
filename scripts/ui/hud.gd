@@ -129,9 +129,22 @@ func refresh(player, phase_name: String, dice_roll: int, state = null) -> void:
 		_bonus_label.text = ""
 
 	var in_build := phase_name == "BUILD"
-	_roll_btn.disabled     = phase_name != "ROLL"
-	_end_btn.disabled      = (phase_name != "BUILD" and phase_name != "ROBBER")
-	_buy_card_btn.disabled = not in_build
+	_roll_btn.disabled = phase_name != "ROLL"
+	_end_btn.disabled  = (phase_name != "BUILD" and phase_name != "ROBBER")
+
+	# Buy Dev Card: disabled when not in BUILD, deck empty, or player can't afford
+	var can_buy := in_build
+	if can_buy and state != null:
+		can_buy = not state.dev_deck.is_empty()
+		if can_buy:
+			can_buy = (player.resources.get(4, 0) >= 1 and   # Ore
+					   player.resources.get(3, 0) >= 1 and   # Grain
+					   player.resources.get(2, 0) >= 1)       # Wool
+	_buy_card_btn.disabled = not can_buy
+	if state != null and state.dev_deck.is_empty():
+		_buy_card_btn.text = "Dev Deck Empty"
+	else:
+		_buy_card_btn.text = "Buy Dev Card"
 
 
 func set_message(msg: String) -> void:
