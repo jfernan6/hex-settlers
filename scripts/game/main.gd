@@ -1,8 +1,10 @@
 extends Node3D
 
-## Phase 5: Roads, cities, robber, number tokens, full game loop.
+## Hex Settlers — main scene entry point.
+## Sprint A+: dev cards, AI player, bank trade, longest road, largest army,
+## logging (Log autoload), game event log (GameEvents autoload), unit tests.
 
-## Sprint A: dev cards, AI player, bank trade, longest road, largest army.
+const TestRunner = preload("res://scripts/tests/test_runner.gd")
 
 const BoardGenerator    = preload("res://scripts/board/board_generator.gd")
 const HexGrid           = preload("res://scripts/board/hex_grid.gd")
@@ -35,7 +37,20 @@ const AI_DELAY := 0.5    # seconds between AI actions
 
 
 func _ready() -> void:
-	print("=== [INIT] Hex Settlers — Sprint A starting ===")
+	var args := OS.get_cmdline_user_args()
+
+	# Unit tests run before scene setup
+	if "--run-tests" in args:
+		var runner := TestRunner.new()
+		add_child(runner)
+		runner.run_all()
+		await get_tree().process_frame
+		_take_screenshot()
+		get_tree().quit()
+		return
+
+	Log.info("=== [INIT] Hex Settlers starting ===")
+	GameEvents.clear()
 	_setup_environment()
 	_setup_lighting()
 	_setup_camera()
@@ -47,21 +62,21 @@ func _ready() -> void:
 	_create_ai_timer()
 	_create_hud()
 	_refresh_hud()
-	print("=== [DONE] Scene ready — children: %d ===" % get_child_count())
+	Log.info("=== [DONE] Scene ready — children: %d ===" % get_child_count())
 
-	if "--debug-screenshot" in OS.get_cmdline_user_args():
+	if "--debug-screenshot" in args:
 		await get_tree().process_frame
 		await get_tree().process_frame
 		_take_screenshot()
 		get_tree().quit()
 
-	if "--debug-play" in OS.get_cmdline_user_args():
+	if "--debug-play" in args:
 		var dc := DebugController.new()
 		dc.init(self, _state)
 		add_child(dc)
 		await dc.run_debug_play()
 
-	if "--debug-fullgame" in OS.get_cmdline_user_args():
+	if "--debug-fullgame" in args:
 		var dc := DebugController.new()
 		dc.init(self, _state)
 		add_child(dc)

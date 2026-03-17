@@ -99,7 +99,9 @@ func roll_dice() -> int:
 	if phase != Phase.ROLL:
 		return 0
 	last_roll = randi_range(1, 6) + randi_range(1, 6)
-	print("[GAME] %s rolled %d" % [current_player().player_name, last_roll])
+	Log.info("[GAME] %s rolled %d" % [current_player().player_name, last_roll])
+	GameEvents.record(GameEvents.EventType.DICE_ROLLED, current_player().player_name,
+		{"roll": last_roll})
 	dice_rolled.emit(last_roll)
 
 	if last_roll == 7:
@@ -138,8 +140,10 @@ func _apply_robber_discard() -> void:
 					break
 				p.resources[max_r] -= 1
 				discarded += 1
-			print("[GAME] %s had %d cards — discarded %d (robber rule)" % [
+			Log.info("[GAME] %s had %d cards — discarded %d (robber rule)" % [
 				p.player_name, total, discarded])
+			GameEvents.record(GameEvents.EventType.RESOURCE_DISCARDED, p.player_name,
+				{"had": total, "discarded": discarded})
 
 
 func _collect_resources(roll: int) -> void:
@@ -162,7 +166,10 @@ func _collect_resources(roll: int) -> void:
 			if multiplier > 0:
 				p.add_resource(res, multiplier)
 				total += multiplier
-	print("[GAME] Roll %d: %d total resources distributed" % [roll, total])
+	Log.debug("[GAME] Roll %d: %d total resources distributed" % [roll, total])
+	if total > 0:
+		GameEvents.record(GameEvents.EventType.RESOURCE_COLLECTED, "all",
+			{"roll": roll, "total": total})
 
 
 func _is_city_at(player: RefCounted, pos: Vector3) -> bool:
@@ -194,8 +201,9 @@ func move_robber(tile_key: String) -> void:
 	if phase != Phase.ROBBER_MOVE:
 		return
 	robber_tile_key = tile_key
-	print("[GAME] Robber moved to %s" % tile_key)
-	# Steal 1 random resource from an opponent adjacent to the tile
+	Log.info("[GAME] Robber moved to %s" % tile_key)
+	GameEvents.record(GameEvents.EventType.ROBBER_MOVED, current_player().player_name,
+		{"tile": tile_key})
 	_try_steal_from_tile(tile_key)
 	phase = Phase.BUILD
 	robber_moved.emit(tile_key)
@@ -229,10 +237,10 @@ func _try_steal_from_tile(tile_key: String) -> void:
 	var stolen: int = available[randi() % available.size()]
 	victim.resources[stolen] -= 1
 	current_player().add_resource(stolen)
-	print("[GAME] %s stole 1 %s from %s" % [
-		current_player().player_name,
-		PlayerData.RES_NAMES[stolen],
-		victim.player_name])
+	Log.info("[GAME] %s stole 1 %s from %s" % [
+		current_player().player_name, PlayerData.RES_NAMES[stolen], victim.player_name])
+	GameEvents.record(GameEvents.EventType.RESOURCE_STOLEN, current_player().player_name,
+		{"resource": PlayerData.RES_NAMES[stolen], "from": victim.player_name})
 
 
 # --- Settlements & cities ---
@@ -269,8 +277,10 @@ func try_place_city(player: RefCounted, settlement_pos: Vector3) -> bool:
 		return false
 	_spend_resources(player, CITY_COST)
 	player.city_positions.append(settlement_pos)
-	player.victory_points += 1  # net +1 (settlement was already 1VP)
-	print("[GAME] %s built city at %s  VP:%d" % [player.player_name, settlement_pos, player.victory_points])
+	player.victory_points += 1
+	Log.info("[GAME] %s built city at %s  VP:%d" % [player.player_name, settlement_pos, player.victory_points])
+	GameEvents.record(GameEvents.EventType.CITY_BUILT, player.player_name,
+		{"vp": player.victory_points})
 	_check_win()
 	return true
 
@@ -295,7 +305,9 @@ func try_place_road(player: RefCounted, player_idx: int, v1: Vector3, v2: Vector
 	else:
 		_spend_resources(player, ROAD_COST)
 	roads.append({"player_index": player_idx, "v1": v1, "v2": v2})
-	print("[GAME] %s placed road (free=%s)  total roads: %d" % [player.player_name, free, roads.size()])
+	Log.info("[GAME] %s placed road (free=%s)  total: %d" % [player.player_name, free, roads.size()])
+	GameEvents.record(GameEvents.EventType.ROAD_BUILT, player.player_name,
+		{"free": free, "total_roads": roads.size()})
 	update_longest_road()
 	return true
 
@@ -331,14 +343,17 @@ func buy_dev_card(player: RefCounted) -> bool:
 	var card: int = dev_deck.pop_back()
 	if card == DevCards.Type.VP:
 		player.victory_points += 1
-		print("[GAME] %s drew VP card — VP now %d  (deck: %d left)" % [
+		Log.info("[GAME] %s drew VP card — VP now %d  (deck: %d left)" % [
 			player.player_name, player.victory_points, dev_deck.size()])
+		GameEvents.record(GameEvents.EventType.DEV_CARD_BOUGHT, player.player_name,
+			{"card": "VP", "deck_left": dev_deck.size()})
 		_check_win()
 	else:
 		player.dev_cards.append(card)
-		print("[GAME] %s drew %s  (deck: %d left, hand: %s)" % [
-			player.player_name, DevCards.NAMES[card], dev_deck.size(),
-			DevCards.hand_summary(player.dev_cards)])
+		Log.info("[GAME] %s drew %s  (deck: %d left)" % [
+			player.player_name, DevCards.NAMES[card], dev_deck.size()])
+		GameEvents.record(GameEvents.EventType.DEV_CARD_BOUGHT, player.player_name,
+			{"card": DevCards.NAMES[card], "deck_left": dev_deck.size()})
 	return true
 
 
@@ -400,9 +415,12 @@ func bank_trade(player: RefCounted, give_res: int, recv_res: int, rate: int = 4)
 		return false
 	player.resources[give_res] -= rate
 	player.add_resource(recv_res)
-	print("[GAME] %s bank trade: %d %s → 1 %s" % [
+	Log.info("[GAME] %s bank trade: %d %s → 1 %s" % [
 		player.player_name, rate,
 		PlayerData.RES_NAMES[give_res], PlayerData.RES_NAMES[recv_res]])
+	GameEvents.record(GameEvents.EventType.BANK_TRADE, player.player_name, {
+		"give": PlayerData.RES_NAMES[give_res],
+		"recv": PlayerData.RES_NAMES[recv_res], "rate": rate})
 	return true
 
 
@@ -441,12 +459,14 @@ func update_longest_road() -> void:
 			if longest_road_holder != i:
 				if longest_road_holder >= 0:
 					players[longest_road_holder].victory_points -= 2
-					print("[GAME] %s loses Longest Road" % players[longest_road_holder].player_name)
+					Log.info("[GAME] %s loses Longest Road" % players[longest_road_holder].player_name)
 				longest_road_holder = i
 				longest_road_length = length
 				players[i].victory_points += 2
-				print("[GAME] %s takes Longest Road (%d) — VP:%d" % [
+				Log.info("[GAME] %s takes Longest Road (%d) — VP:%d" % [
 					players[i].player_name, length, players[i].victory_points])
+				GameEvents.record(GameEvents.EventType.LONGEST_ROAD, players[i].player_name,
+					{"length": length, "vp": players[i].victory_points})
 				changed = true
 				_check_win()
 	if changed:
@@ -521,8 +541,9 @@ func _check_largest_army() -> void:
 func end_turn() -> void:
 	if phase == Phase.GAME_OVER:
 		return
-	print("[GAME] %s ends turn" % current_player().player_name)
+	Log.debug("[GAME] %s ends turn" % current_player().player_name)
 	_print_all_resources()
+	GameEvents.advance_turn(current_player().player_name)
 	current_player_index = (current_player_index + 1) % players.size()
 	last_roll = 0
 	var any_free := false
@@ -540,8 +561,10 @@ func _check_win() -> void:
 		if players[i].victory_points >= WIN_VP:
 			winner_index = i
 			phase = Phase.GAME_OVER
-			print("[GAME] *** %s WINS with %d VP! ***" % [
+			Log.info("[GAME] *** %s WINS with %d VP! ***" % [
 				players[i].player_name, players[i].victory_points])
+			GameEvents.record(GameEvents.EventType.GAME_OVER, players[i].player_name,
+				{"vp": players[i].victory_points, "turns": GameEvents.turn_number})
 			game_won.emit(players[i])
 			return
 

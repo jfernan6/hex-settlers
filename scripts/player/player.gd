@@ -33,18 +33,22 @@ var is_ai: bool = false
 
 
 func _init(p_name: String, p_color: Color) -> void:
-	player_name = p_name
-	color = p_color
-	resources = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+	player_name    = p_name
+	color          = p_color
+	victory_points = 0
+	resources      = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 	settlement_positions = []
-	city_positions = []
+	city_positions       = []
+	dev_cards            = []
+	knight_count         = 0
+	free_roads           = 0
 
 
 # --- Resources ---
 
 func add_resource(res: int, amount: int = 1) -> void:
 	resources[res] = resources.get(res, 0) + amount
-	print("[PLAYER] %s +%d %s  (now: %d)" % [
+	Log.debug("[PLAYER] %s +%d %s  (now: %d)" % [
 		player_name, amount, RES_NAMES[res], resources[res]])
 
 
@@ -69,8 +73,10 @@ func place_settlement(pos: Vector3) -> void:
 			resources[r] -= SETTLEMENT_COST[r]
 	settlement_positions.append(pos)
 	victory_points += 1
-	print("[PLAYER] %s placed settlement @ (%.1f,%.1f) | VP:%d | free left:%d" % [
+	Log.info("[PLAYER] %s placed settlement @ (%.1f,%.1f) | VP:%d | free left:%d" % [
 		player_name, pos.x, pos.z, victory_points, free_placements_left])
+	GameEvents.record(GameEvents.EventType.SETTLEMENT_PLACED, player_name, {
+		"pos_x": pos.x, "pos_z": pos.z, "vp": victory_points})
 
 
 # --- Display ---
