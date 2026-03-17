@@ -18,10 +18,12 @@ const DebugController   = preload("res://scripts/game/debug_controller.gd")
 const DevCards          = preload("res://scripts/game/dev_cards.gd")
 const AIPlayer          = preload("res://scripts/game/ai_player.gd")
 const PlayerData        = preload("res://scripts/player/player.gd")
+const GodModePanel      = preload("res://scripts/ui/god_mode_panel.gd")
 
 var _state: RefCounted
 var _hud:   CanvasLayer
 var _robber: MeshInstance3D
+var _god_panel: CanvasLayer  # God Mode overlay (F4 to toggle)
 
 var _vertex_slots: Array = []
 var _edge_slots:   Array = []
@@ -30,6 +32,9 @@ const NUM_PLAYERS := 2
 
 # God mode
 var _god_forced_roll: int = 0
+
+# AI turn safeguard — reset each turn, forces end_turn after >8 actions
+var _ai_turn_actions: int = 0
 
 # AI
 var _ai_timer: Timer     # fires after short delay to let frame render before AI acts
@@ -61,6 +66,7 @@ func _ready() -> void:
 	_create_robber()
 	_create_ai_timer()
 	_create_hud()
+	_create_god_panel()
 	_refresh_hud()
 	Log.info("=== [DONE] Scene ready — children: %d ===" % get_child_count())
 
@@ -86,11 +92,12 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
+			KEY_F4:  _toggle_god_panel()       # Open/close god mode UI
 			KEY_F11: _toggle_fullscreen()
 			KEY_F12: _take_screenshot()
-			KEY_F1:  _god_fill_resources()     # Give current player 5 of everything
-			KEY_F2:  _god_cycle_forced_roll()  # Cycle forced dice: 0(off)→2→3→…→12
-			KEY_F3:  _god_instant_win()        # Set current player to 10 VP
+			KEY_F1:  _god_fill_resources()     # Quick: give current player 5 of everything
+			KEY_F2:  _god_cycle_forced_roll()  # Quick: cycle forced dice roll
+			KEY_F3:  _god_instant_win()        # Quick: set current player to 10 VP
 	if event.is_action_pressed("ui_cancel"):
 		get_tree().quit()
 
@@ -259,6 +266,115 @@ func _create_hud() -> void:
 	_hud.buy_dev_card_pressed.connect(_try_buy_dev_card)
 	add_child(_hud)
 	print("[HUD] Created")
+
+
+func _create_god_panel() -> void:
+	_god_panel = GodModePanel.new()
+	_god_panel.visible = false
+	_god_panel.give_resource.connect(_gm_give_resource)
+	_god_panel.build_free.connect(_gm_build_free)
+	_god_panel.give_dev_card.connect(_gm_give_dev_card)
+	_god_panel.force_roll.connect(_gm_force_roll)
+	_god_panel.switch_player.connect(_gm_switch_player)
+	_god_panel.instant_win.connect(_god_instant_win)
+	_god_panel.panel_closed.connect(_toggle_god_panel)
+	add_child(_god_panel)
+	Log.info("[GOD] God Mode panel created — press F4 to open")
+
+
+func _toggle_god_panel() -> void:
+	_god_panel.visible = not _god_panel.visible
+	if _god_panel.visible:
+		var p = _state.current_player()
+		_god_panel.set_player_name(p.player_name, p.color)
+
+
+# ---------------------------------------------------------------
+# God Mode signal handlers
+# ---------------------------------------------------------------
+
+func _gm_give_resource(res: int, amount: int) -> void:
+	var player = _state.current_player()
+	if amount < 0:
+		player.resources[res] = max(0, player.resources.get(res, 0) + amount)
+	else:
+		player.add_resource(res, amount)
+	_refresh_hud()
+	Log.info("[GOD] %s: %s %+d (now %d)" % [
+		player.player_name, PlayerData.RES_NAMES[res], amount, player.resources[res]])
+
+
+func _gm_build_free(type: String) -> void:
+	var player = _state.current_player()
+	var pidx: int = _state.current_player_index
+	match type:
+		"settlement":
+			var slot = AIPlayer.pick_setup_vertex(_vertex_slots, _state.tile_data, _state)
+			if slot:
+				slot.occupy(player.color, pidx)
+				player.place_settlement_free(slot.position)
+				_state._check_win()
+				_refresh_hud()
+				Log.info("[GOD] Free settlement at %s" % slot.position)
+			else:
+				_hud.set_message("[GOD] No valid vertex for settlement")
+		"road":
+			var road_slot = AIPlayer.pick_road(_edge_slots, player, _state)
+			if road_slot:
+				road_slot.occupy(player.color, pidx)
+				player.free_roads += 1  # give one free road
+				_state.try_place_road(player, pidx, road_slot.v1, road_slot.v2)
+				_refresh_hud()
+				Log.info("[GOD] Free road placed")
+			else:
+				_hud.set_message("[GOD] No connected road slot found")
+		"city":
+			for slot in _vertex_slots:
+				if slot.is_occupied and slot.owner_index == pidx and not slot.is_city:
+					slot.upgrade_to_city(player.color)
+					_state.try_place_city(player, slot.position)
+					_refresh_hud()
+					Log.info("[GOD] Free city upgrade")
+					return
+			_hud.set_message("[GOD] No settlement to upgrade")
+		"dev_card":
+			if not _state.dev_deck.is_empty():
+				player.resources = {0:1, 1:1, 2:1, 3:1, 4:1}  # temp give cost
+				_state.buy_dev_card(player)
+				player.resources = {0:0, 1:0, 2:0, 3:0, 4:0}  # clear cost
+				_refresh_hud()
+			else:
+				_hud.set_message("[GOD] Dev deck is empty!")
+
+
+func _gm_give_dev_card(card_type: int) -> void:
+	var player = _state.current_player()
+	if card_type == DevCards.Type.VP:
+		player.victory_points += 1
+		_state._check_win()
+		_hud.set_message("[GOD] VP card — %s now has %d VP" % [player.player_name, player.victory_points])
+	else:
+		player.dev_cards.append(card_type)
+		_hud.set_message("[GOD] Gave %s a %s card" % [player.player_name, DevCards.NAMES[card_type]])
+	_refresh_hud()
+	Log.info("[GOD] Gave dev card type %d to %s" % [card_type, player.player_name])
+
+
+func _gm_force_roll(number: int) -> void:
+	_god_forced_roll = number
+	_hud.set_message("[GOD] Next dice roll forced to %d — press Roll Dice" % number)
+	Log.info("[GOD] Forced roll set to %d" % number)
+
+
+func _gm_switch_player(player_idx: int) -> void:
+	if player_idx >= _state.players.size():
+		_hud.set_message("[GOD] Player %d doesn't exist" % (player_idx + 1))
+		return
+	_state.current_player_index = player_idx
+	var p = _state.current_player()
+	_god_panel.set_player_name(p.player_name, p.color)
+	_refresh_hud()
+	Log.info("[GOD] Switched active player to %s" % p.player_name)
 
 
 func _refresh_hud() -> void:
@@ -539,6 +655,7 @@ func _on_end_turn() -> void:
 
 
 func _on_turn_changed(_player: Object) -> void:
+	_ai_turn_actions = 0   # reset per-turn action counter
 	_refresh_hud()
 	if _state.current_player().is_ai and _state.phase != GameState.Phase.GAME_OVER:
 		_ai_timer.start()
@@ -599,12 +716,19 @@ func _process_ai_turn() -> void:
 					_ai_timer.start()   # keep building this turn
 					return
 				"end_turn":
+					_ai_turn_actions = 0
 					_on_end_turn()
 					return
 			_refresh_hud()
-			# Continue building if AI still has moves
-			if _state.phase == GameState.Phase.BUILD and player.is_ai:
+			_ai_turn_actions += 1
+			if _ai_turn_actions > 8:  # safeguard against infinite build loops
+				Log.warn("[AI] %s exceeded max actions - forcing end turn" % player.player_name)
+				_ai_turn_actions = 0
+				_on_end_turn()
+			elif _state.phase == GameState.Phase.BUILD and player.is_ai:
 				_ai_timer.start()
+			elif _state.phase == GameState.Phase.ROBBER_MOVE and player.is_ai:
+				_ai_timer.start()  # Knight card triggered ROBBER_MOVE mid-turn
 
 
 # ---------------------------------------------------------------
