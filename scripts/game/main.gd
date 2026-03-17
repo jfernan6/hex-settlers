@@ -2,20 +2,28 @@ extends Node3D
 
 ## Phase 5: Roads, cities, robber, number tokens, full game loop.
 
-const BoardGenerator = preload("res://scripts/board/board_generator.gd")
-const HexGrid        = preload("res://scripts/board/hex_grid.gd")
-const HexVertices    = preload("res://scripts/board/hex_vertices.gd")
-const HexEdges       = preload("res://scripts/board/hex_edges.gd")
-const VertexSlot     = preload("res://scripts/board/vertex_slot.gd")
-const EdgeSlot       = preload("res://scripts/board/edge_slot.gd")
-const GameState      = preload("res://scripts/game/game_state.gd")
-const HUD            = preload("res://scripts/ui/hud.gd")
+const BoardGenerator    = preload("res://scripts/board/board_generator.gd")
+const HexGrid           = preload("res://scripts/board/hex_grid.gd")
+const HexVertices       = preload("res://scripts/board/hex_vertices.gd")
+const HexEdges          = preload("res://scripts/board/hex_edges.gd")
+const VertexSlot        = preload("res://scripts/board/vertex_slot.gd")
+const EdgeSlot          = preload("res://scripts/board/edge_slot.gd")
+const GameState         = preload("res://scripts/game/game_state.gd")
+const HUD               = preload("res://scripts/ui/hud.gd")
+const DebugController   = preload("res://scripts/game/debug_controller.gd")
 
 var _state: RefCounted
 var _hud:   CanvasLayer
-var _robber: MeshInstance3D  # single robber piece moved between tiles
+var _robber: MeshInstance3D
+
+# Slot arrays — indexed so debug controller can address them by position
+var _vertex_slots: Array = []
+var _edge_slots:   Array = []
 
 const NUM_PLAYERS := 2
+
+# God mode state
+var _god_forced_roll: int = 0  # 0 = not forced; 2-12 = force next roll to this
 
 
 func _ready() -> void:
@@ -38,12 +46,21 @@ func _ready() -> void:
 		_take_screenshot()
 		get_tree().quit()
 
+	if "--debug-play" in OS.get_cmdline_user_args():
+		var dc := DebugController.new()
+		dc.init(self, _state)
+		add_child(dc)
+		await dc.run_debug_play()
+
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_F11: _toggle_fullscreen()
 			KEY_F12: _take_screenshot()
+			KEY_F1:  _god_fill_resources()     # Give current player 5 of everything
+			KEY_F2:  _god_cycle_forced_roll()  # Cycle forced dice: 0(off)→2→3→…→12
+			KEY_F3:  _god_instant_win()        # Set current player to 10 VP
 	if event.is_action_pressed("ui_cancel"):
 		get_tree().quit()
 
@@ -125,25 +142,24 @@ func _create_vertex_slots() -> void:
 		slot.position = pos
 		slot.slot_clicked.connect(_on_vertex_slot_clicked)
 		add_child(slot)
+		_vertex_slots.append(slot)   # store for debug controller
 	print("[VERTEX] %d slots. Children: %d" % [positions.size(), get_child_count()])
 
 
 func _create_edge_slots() -> void:
 	print("[EDGE] Creating 72 edge slots...")
 	var edges := HexEdges.get_all_edges(HexGrid.get_board_positions())
-	var added := 0
 	for edge_data in edges:
 		var slot := EdgeSlot.new()
 		slot.position = edge_data.midpoint
 		slot.v1 = edge_data.v1
 		slot.v2 = edge_data.v2
-		# Rotate bar to align with edge direction
 		var dir: Vector3 = edge_data.direction
 		slot.rotation.y = atan2(dir.x, dir.z)
 		slot.slot_clicked.connect(_on_edge_slot_clicked)
 		add_child(slot)
-		added += 1
-	print("[EDGE] %d road slots. Children: %d" % [added, get_child_count()])
+		_edge_slots.append(slot)     # store for debug controller
+	print("[EDGE] %d road slots. Children: %d" % [_edge_slots.size(), get_child_count()])
 
 
 func _create_robber() -> void:
@@ -286,9 +302,21 @@ func _set_tile_picking(enabled: bool) -> void:
 func _on_roll_dice() -> void:
 	if _state.phase != GameState.Phase.ROLL:
 		return
-	_state.roll_dice()
+	# God mode: override with forced roll if set
+	if _god_forced_roll > 0:
+		_state.last_roll = _god_forced_roll
+		print("[GOD] Forced roll: %d" % _god_forced_roll)
+		if _god_forced_roll == 7:
+			_state.phase = GameState.Phase.ROBBER_MOVE
+			_set_tile_picking(true)
+		else:
+			_state.debug_collect(_god_forced_roll)
+			_state.phase = GameState.Phase.BUILD
+		_state.dice_rolled.emit(_god_forced_roll)
+	else:
+		_state.roll_dice()
 	if _state.phase == GameState.Phase.ROBBER_MOVE:
-		_set_tile_picking(true)  # enable tile clicks for robber placement
+		_set_tile_picking(true)
 	_refresh_hud()
 
 
@@ -313,6 +341,42 @@ func _on_game_won(_winner: Object) -> void:
 
 func _on_robber_moved(_key: String) -> void:
 	_refresh_hud()
+
+
+# ---------------------------------------------------------------
+# God mode (F1/F2/F3 during normal play)
+# ---------------------------------------------------------------
+
+func _god_fill_resources() -> void:
+	var p = _state.current_player()
+	for r in [0, 1, 2, 3, 4]:
+		p.add_resource(r, 5)
+	_refresh_hud()
+	print("[GOD] Gave 5 of each resource to %s" % p.player_name)
+
+
+func _god_cycle_forced_roll() -> void:
+	# Cycles forced roll: off → 2 → 3 → … → 12 → off
+	if _god_forced_roll == 0:
+		_god_forced_roll = 2
+	elif _god_forced_roll >= 12:
+		_god_forced_roll = 0
+	else:
+		_god_forced_roll += 1
+	var msg := "God roll OFF" if _god_forced_roll == 0 else "God roll LOCKED to %d" % _god_forced_roll
+	_hud.set_message("[GOD] %s  (F2 to change)" % msg)
+	print("[GOD] %s" % msg)
+
+
+func _god_instant_win() -> void:
+	var p = _state.current_player()
+	var needed: int = 10 - p.victory_points
+	if needed > 0:
+		p.victory_points = 10
+		_hud.set_message("[GOD] %s instant win!" % p.player_name)
+		print("[GOD] Set %s to 10 VP" % p.player_name)
+		_state._check_win()
+		_refresh_hud()
 
 
 # ---------------------------------------------------------------

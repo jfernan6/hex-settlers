@@ -92,6 +92,11 @@ func roll_dice() -> int:
 	return last_roll
 
 
+## Public wrapper for debug controller
+func debug_collect(roll: int) -> void:
+	_collect_resources(roll)
+
+
 func _collect_resources(roll: int) -> void:
 	var total := 0
 	for key in tile_data:
