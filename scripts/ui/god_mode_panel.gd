@@ -16,8 +16,8 @@ const DevCards = preload("res://scripts/game/dev_cards.gd")
 const PlayerData = preload("res://scripts/player/player.gd")
 
 var _panel: PanelContainer
-var _player_label: Label   # shows current target player name
-var _font_size: int = 13
+var _player_label: Label
+var _font_size: int = 13     # set from viewport in _build_ui()
 
 const RES_NAMES := ["Lumber", "Brick", "Wool", "Grain", "Ore"]
 const RES_COLORS := [
@@ -35,16 +35,22 @@ func _ready() -> void:
 
 
 func _build_ui() -> void:
+	# Scale everything from viewport size so it looks right on any resolution
+	var vp: Vector2  = get_viewport().get_visible_rect().size
+	var pw: float    = maxf(300.0, vp.x * 0.19)
+	var ph: float    = maxf(500.0, vp.y * 0.88)
+	_font_size       = int(maxf(12.0, vp.x * 0.010))
+
 	# --- Outer panel ---
 	_panel = PanelContainer.new()
 	_panel.anchor_left   = 0.0
 	_panel.anchor_right  = 0.0
 	_panel.anchor_top    = 0.0
 	_panel.anchor_bottom = 0.0
-	_panel.offset_left   = 10.0
-	_panel.offset_top    = 10.0
-	_panel.offset_right  = 320.0
-	_panel.offset_bottom = 860.0
+	_panel.offset_left   = 12.0
+	_panel.offset_top    = 12.0
+	_panel.offset_right  = pw + 12.0
+	_panel.offset_bottom = ph + 12.0
 
 	var style := StyleBoxFlat.new()
 	style.bg_color         = Color(0.07, 0.08, 0.11, 0.96)

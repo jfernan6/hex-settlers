@@ -117,26 +117,82 @@ func _on_hover_end() -> void:
 # Placement — no add_child / remove_child during gameplay
 # ---------------------------------------------------------------
 
-## Place a settlement — hides disc, shows house shape in player colour.
+const SETTLEMENT_GLB := "res://assets/models/pieces/settlement.glb"
+const CITY_GLB        := "res://assets/models/pieces/city.glb"
+
+
+## Place a settlement — hides disc, shows Kenney house (or fallback box+roof).
 func occupy(player_color: Color, p_owner_index: int) -> void:
 	is_occupied  = true
 	owner_index  = p_owner_index
 	_disc.visible = false
-	_apply_color(player_color, false)
-	_body.visible = true
-	_roof.visible = true
+
+	# Try Kenney GLB model first
+	var scene = load(SETTLEMENT_GLB)
+	if scene != null and scene is PackedScene:
+		var node: Node3D = scene.instantiate()
+		node.scale    = Vector3(0.018, 0.018, 0.018)
+		node.position = Vector3(0, 0, 0)
+		# Tint the model using a shader parameter isn't straightforward for GLB,
+		# so we overlay a small colored cylinder as a player indicator
+		_body.visible   = false
+		_roof.visible   = false
+		add_child(node)
+		_add_player_ring(player_color, 0.22)
+	else:
+		_apply_color(player_color, false)
+		_body.visible = true
+		_roof.visible = true
+
 	Log.info("[VERTEX] Settlement at %s  owner=%d" % [position, p_owner_index])
 
 
-## Upgrade settlement to city — taller, more metallic.
+## Upgrade settlement to city — Kenney mansion model or fallback tower.
 func upgrade_to_city(player_color: Color) -> void:
 	is_city = true
-	_body.scale = Vector3(1.4, 1.5, 1.4)
-	_body.position = Vector3(0, 0.22, 0)
-	_roof.scale    = Vector3(1.3, 1.25, 1.3)
-	_roof.position = Vector3(0, 0.60, 0)
-	_apply_color(player_color, true)
+	# Remove old settlement GLB children (keep _body/_roof/_disc)
+	for child in get_children():
+		if child != _disc and child != _body and child != _roof and \
+				not (child is CollisionShape3D):
+			child.queue_free()
+
+	_body.visible = false
+	_roof.visible = false
+
+	var scene = load(CITY_GLB)
+	if scene != null and scene is PackedScene:
+		var node: Node3D = scene.instantiate()
+		node.scale    = Vector3(0.022, 0.022, 0.022)
+		node.position = Vector3(0, 0, 0)
+		add_child(node)
+		_add_player_ring(player_color, 0.32)
+	else:
+		_body.scale = Vector3(1.4, 1.5, 1.4)
+		_body.position = Vector3(0, 0.22, 0)
+		_roof.scale    = Vector3(1.3, 1.25, 1.3)
+		_roof.position = Vector3(0, 0.60, 0)
+		_apply_color(player_color, true)
+		_body.visible = true
+		_roof.visible = true
+
 	Log.info("[VERTEX] City at %s  owner=%d" % [position, owner_index])
+
+
+## Small colored ring under the building to show player ownership.
+func _add_player_ring(color: Color, radius: float) -> void:
+	var ring := MeshInstance3D.new()
+	var m := CylinderMesh.new()
+	m.top_radius = radius; m.bottom_radius = radius
+	m.height = 0.05; m.radial_segments = 12
+	ring.mesh = m
+	ring.position = Vector3(0, 0.025, 0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 0.8
+	ring.material_override = mat
+	add_child(ring)
 
 
 func _apply_color(color: Color, city: bool) -> void:

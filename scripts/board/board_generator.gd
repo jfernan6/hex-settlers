@@ -135,22 +135,21 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	container.position = HexGrid.axial_to_world(q, r)
 	parent.add_child(container)
 
-	# Hexagonal prism mesh
+	# Procedural PBR hex tile (vivid terrain colors) + optional Kenney decoration on top.
+	# Terrain color gives clarity; 3D decoration adds visual interest.
+	var pbr: Dictionary = TERRAIN_PBR[terrain]
 	var tile := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
-	mesh.top_radius = 1.0
-	mesh.bottom_radius = 1.0
-	mesh.height = 0.25
-	mesh.radial_segments = 6
-	mesh.rings = 1
+	mesh.top_radius = 1.0; mesh.bottom_radius = 1.0
+	mesh.height = 0.25; mesh.radial_segments = 6; mesh.rings = 1
 	tile.mesh = mesh
-	var pbr: Dictionary = TERRAIN_PBR[terrain]
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = pbr.c
-	mat.roughness    = pbr.r
-	mat.metallic     = pbr.m
+	mat.albedo_color = pbr.c; mat.roughness = pbr.r; mat.metallic = pbr.m
 	tile.material_override = mat
 	container.add_child(tile)
+
+	# Add Kenney 3D decoration on top of the tile for visual depth
+	_add_terrain_decoration(container, terrain)
 
 	# Clickable area (used for robber placement when phase=ROBBER_MOVE)
 	var area := Area3D.new()
@@ -196,6 +195,119 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 # ---------------------------------------------------------------
 # Sprint B: visual elements
 # ---------------------------------------------------------------
+
+const KENNEY_TILE_PATHS: Dictionary = {
+	TerrainType.FOREST:    "res://assets/models/tiles/forest.glb",
+	TerrainType.HILLS:     "res://assets/models/tiles/hills.glb",
+	TerrainType.PASTURE:   "res://assets/models/tiles/pasture.glb",
+	TerrainType.FIELDS:    "res://assets/models/tiles/fields.glb",
+	TerrainType.MOUNTAINS: "res://assets/models/tiles/mountains.glb",
+	TerrainType.DESERT:    "res://assets/models/tiles/desert.glb",
+}
+const KENNEY_SEA_PATH := "res://assets/models/tiles/sea.glb"
+
+
+## Adds procedural 3D terrain features on top of the PBR hex tile.
+## Uses Godot built-in meshes — no GLB import dependency, always renders correctly.
+func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
+	match terrain:
+		TerrainType.FOREST:
+			_add_trees(container)
+		TerrainType.MOUNTAINS:
+			_add_mountain_peak(container)
+		TerrainType.HILLS:
+			_add_hill_dome(container)
+		TerrainType.DESERT:
+			_add_desert_rock(container)
+
+
+func _add_trees(container: Node3D) -> void:
+	# 3 small cone trees at slightly offset positions
+	var positions := [Vector3(0, 0, 0), Vector3(0.32, 0, 0.22), Vector3(-0.28, 0, 0.18)]
+	var heights   := [0.55, 0.42, 0.48]
+	for i in positions.size():
+		var trunk := MeshInstance3D.new()
+		var t_mesh := CylinderMesh.new()
+		t_mesh.top_radius = 0.04; t_mesh.bottom_radius = 0.06
+		t_mesh.height = 0.18; t_mesh.radial_segments = 6
+		trunk.mesh = t_mesh
+		trunk.position = positions[i] + Vector3(0, 0.22, 0)
+		trunk.material_override = _solid_mat(Color(0.35, 0.22, 0.08), 0.9, 0)
+		container.add_child(trunk)
+
+		var canopy := MeshInstance3D.new()
+		var c_mesh := CylinderMesh.new()
+		c_mesh.top_radius = 0.0; c_mesh.bottom_radius = 0.22
+		c_mesh.height = heights[i]; c_mesh.radial_segments = 6
+		canopy.mesh = c_mesh
+		canopy.position = positions[i] + Vector3(0, 0.30 + heights[i] * 0.5, 0)
+		canopy.material_override = _solid_mat(Color(0.05, 0.28, 0.05), 0.92, 0)
+		container.add_child(canopy)
+
+
+func _add_mountain_peak(container: Node3D) -> void:
+	# Two jagged grey peaks
+	for offset in [Vector3(0.15, 0, 0), Vector3(-0.12, 0, 0.08)]:
+		var peak := MeshInstance3D.new()
+		var m := CylinderMesh.new()
+		m.top_radius = 0.0; m.bottom_radius = 0.32
+		m.height = 0.65; m.radial_segments = 5
+		peak.mesh = m
+		peak.position = offset + Vector3(0, 0.45, 0)
+		peak.rotation_degrees = Vector3(0, randf_range(0, 72), 0)
+		peak.material_override = _solid_mat(Color(0.55, 0.55, 0.58), 0.6, 0.18)
+		container.add_child(peak)
+		# Snow cap
+		var snow := MeshInstance3D.new()
+		var sm := CylinderMesh.new()
+		sm.top_radius = 0.0; sm.bottom_radius = 0.12; sm.height = 0.18
+		snow.mesh = sm
+		snow.position = offset + Vector3(0, 0.72, 0)
+		snow.material_override = _solid_mat(Color(0.95, 0.95, 0.97), 0.5, 0)
+		container.add_child(snow)
+
+
+func _add_hill_dome(container: Node3D) -> void:
+	var dome := MeshInstance3D.new()
+	var m := SphereMesh.new()
+	m.radius = 0.38; m.height = 0.42; m.radial_segments = 10; m.rings = 6
+	dome.mesh = m
+	dome.scale   = Vector3(1.0, 0.55, 1.0)
+	dome.position = Vector3(0, 0.14, 0)
+	dome.material_override = _solid_mat(Color(0.55, 0.22, 0.06), 0.88, 0.04)
+	container.add_child(dome)
+
+
+func _add_desert_rock(container: Node3D) -> void:
+	# Flat sandstone butte shape
+	var rock := MeshInstance3D.new()
+	var m := CylinderMesh.new()
+	m.top_radius = 0.18; m.bottom_radius = 0.28; m.height = 0.22; m.radial_segments = 6
+	rock.mesh = m
+	rock.position = Vector3(0.1, 0.23, 0)
+	rock.rotation_degrees = Vector3(0, 20, 0)
+	rock.material_override = _solid_mat(Color(0.78, 0.60, 0.30), 0.9, 0)
+	container.add_child(rock)
+
+
+func _solid_mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness    = roughness
+	mat.metallic     = metallic
+	return mat
+
+
+## Try to load a Kenney hex tile GLB. Returns instantiated Node3D or null on failure.
+func _try_load_kenney_tile(terrain: int) -> Node3D:
+	var path: String = KENNEY_TILE_PATHS.get(terrain, "")
+	if path == "":
+		return null
+	var scene = load(path)
+	if scene == null or not (scene is PackedScene):
+		return null
+	return scene.instantiate()
+
 
 func _spawn_board_base(parent: Node3D) -> void:
 	var base := MeshInstance3D.new()
