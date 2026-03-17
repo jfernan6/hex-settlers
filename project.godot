@@ -14,7 +14,7 @@ config/name="Hex Settlers"
 config/description="A 3D Catan-inspired board game built with Godot 4."
 config/version="0.1.0"
 config/features=PackedStringArray("4.6", "Forward Plus")
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/main_menu.tscn"
 
 [autoload]
 

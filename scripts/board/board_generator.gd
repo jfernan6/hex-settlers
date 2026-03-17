@@ -23,14 +23,27 @@ const TERRAIN_COUNTS: Dictionary = {
 	TerrainType.DESERT:    1,
 }
 
-const TERRAIN_COLORS: Dictionary = {
-	TerrainType.FOREST:    Color(0.10, 0.42, 0.10),
-	TerrainType.HILLS:     Color(0.72, 0.30, 0.10),
-	TerrainType.PASTURE:   Color(0.45, 0.78, 0.20),
-	TerrainType.FIELDS:    Color(0.92, 0.80, 0.10),
-	TerrainType.MOUNTAINS: Color(0.50, 0.50, 0.52),
-	TerrainType.DESERT:    Color(0.90, 0.82, 0.52),
+## PBR properties per terrain: colour, roughness, metallic
+const TERRAIN_PBR: Dictionary = {
+	TerrainType.FOREST:    {c=Color(0.07, 0.30, 0.07), r=0.92, m=0.00},
+	TerrainType.HILLS:     {c=Color(0.68, 0.20, 0.06), r=0.88, m=0.05},
+	TerrainType.PASTURE:   {c=Color(0.35, 0.72, 0.14), r=0.94, m=0.00},
+	TerrainType.FIELDS:    {c=Color(0.90, 0.76, 0.06), r=0.92, m=0.00},
+	TerrainType.MOUNTAINS: {c=Color(0.40, 0.40, 0.44), r=0.62, m=0.22},
+	TerrainType.DESERT:    {c=Color(0.92, 0.84, 0.54), r=0.97, m=0.00},
 }
+
+# Keep for backwards compat with any log/test that references TERRAIN_COLORS
+const TERRAIN_COLORS: Dictionary = {
+	TerrainType.FOREST:    Color(0.07, 0.30, 0.07),
+	TerrainType.HILLS:     Color(0.68, 0.20, 0.06),
+	TerrainType.PASTURE:   Color(0.35, 0.72, 0.14),
+	TerrainType.FIELDS:    Color(0.90, 0.76, 0.06),
+	TerrainType.MOUNTAINS: Color(0.40, 0.40, 0.44),
+	TerrainType.DESERT:    Color(0.92, 0.84, 0.54),
+}
+
+const SEA_PBR: Dictionary = {c=Color(0.04, 0.28, 0.58), r=0.18, m=0.35}
 
 const TERRAIN_NAMES: Dictionary = {
 	TerrainType.FOREST:    "Forest",
@@ -49,6 +62,8 @@ const NUMBER_TOKENS: Array = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11,
 ## Returns a Dictionary mapping "q,r" -> {terrain, number, center, q, r}
 ## so game logic can look up which tiles a settlement is adjacent to.
 func generate(parent: Node3D) -> Dictionary:
+	_spawn_board_base(parent)
+	_spawn_sea_frame(parent)
 	var positions := HexGrid.get_board_positions()
 	var terrains := _build_shuffled_terrains()
 	var tokens := NUMBER_TOKENS.duplicate()
@@ -127,9 +142,11 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	mesh.radial_segments = 6
 	mesh.rings = 1
 	tile.mesh = mesh
+	var pbr: Dictionary = TERRAIN_PBR[terrain]
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = TERRAIN_COLORS[terrain]
-	mat.roughness = 0.9
+	mat.albedo_color = pbr.c
+	mat.roughness    = pbr.r
+	mat.metallic     = pbr.m
 	tile.material_override = mat
 	container.add_child(tile)
 
@@ -172,3 +189,51 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		container.add_child(pip_label)
 
 	return area
+
+
+# ---------------------------------------------------------------
+# Sprint B: visual elements
+# ---------------------------------------------------------------
+
+func _spawn_board_base(parent: Node3D) -> void:
+	var base := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius    = 5.8
+	mesh.bottom_radius = 5.8
+	mesh.height        = 0.10
+	mesh.radial_segments = 24
+	mesh.rings = 1
+	base.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.14, 0.09, 0.05)  # dark walnut wood
+	mat.roughness    = 0.88
+	mat.metallic     = 0.05
+	base.position = Vector3(0, -0.18, 0)
+	base.name = "BoardBase"
+	parent.add_child(base)
+
+
+func _spawn_sea_frame(parent: Node3D) -> void:
+	# Ring 3 (18 tiles) forms the ocean border around the playfield
+	var sea_positions := HexGrid._get_ring_positions(3)
+	for pos in sea_positions:
+		var container := Node3D.new()
+		container.position = HexGrid.axial_to_world(pos.x, pos.y)
+		container.name = "Sea_%d_%d" % [pos.x, pos.y]
+		parent.add_child(container)
+
+		var tile := MeshInstance3D.new()
+		var mesh := CylinderMesh.new()
+		mesh.top_radius    = 1.0
+		mesh.bottom_radius = 1.0
+		mesh.height        = 0.20
+		mesh.radial_segments = 6
+		mesh.rings = 1
+		tile.mesh = mesh
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = SEA_PBR.c
+		mat.roughness    = SEA_PBR.r
+		mat.metallic     = SEA_PBR.m
+		tile.material_override = mat
+		container.add_child(tile)

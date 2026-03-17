@@ -110,23 +110,41 @@ func _toggle_fullscreen() -> void:
 func _setup_environment() -> void:
 	var world_env := WorldEnvironment.new()
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.45, 0.65, 0.85)
+	env.background_mode  = Environment.BG_COLOR
+	env.background_color = Color(0.10, 0.11, 0.15)  # dark table
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(1.0, 1.0, 1.0)
-	env.ambient_light_energy = 0.4
+	env.ambient_light_color  = Color(0.82, 0.86, 1.0)
+	env.ambient_light_energy = 0.22
 	world_env.environment = env
 	add_child(world_env)
-	print("[SETUP] Environment OK")
+	Log.info("[SETUP] Environment OK (dark table)")
 
 
 func _setup_lighting() -> void:
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50.0, 30.0, 0.0)
-	sun.light_energy = 1.5
-	sun.shadow_enabled = true
-	add_child(sun)
-	print("[SETUP] Lighting OK")
+	# Key light — warm, casts shadows
+	var key := DirectionalLight3D.new()
+	key.rotation_degrees = Vector3(-52.0, 28.0, 0.0)
+	key.light_energy     = 1.7
+	key.light_color      = Color(1.0, 0.94, 0.84)
+	key.shadow_enabled   = true
+	add_child(key)
+
+	# Fill light — cool, no shadow
+	var fill := DirectionalLight3D.new()
+	fill.rotation_degrees = Vector3(-28.0, -155.0, 0.0)
+	fill.light_energy     = 0.38
+	fill.light_color      = Color(0.75, 0.84, 1.0)
+	fill.shadow_enabled   = false
+	add_child(fill)
+
+	# Rim light — from behind
+	var rim := DirectionalLight3D.new()
+	rim.rotation_degrees = Vector3(12.0, 95.0, 0.0)
+	rim.light_energy     = 0.28
+	rim.shadow_enabled   = false
+	add_child(rim)
+
+	Log.info("[SETUP] Lighting OK (3-point)")
 
 
 func _setup_camera() -> void:
