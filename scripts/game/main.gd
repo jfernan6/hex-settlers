@@ -159,6 +159,7 @@ func _setup_game() -> void:
 	_state = GameState.new()
 	_state.init_players(NUM_PLAYERS)
 	_state.init_dev_deck()
+	_state.init_setup()
 	# Mark player 2+ as AI (player 1 = human by default)
 	for i in range(1, _state.players.size()):
 		_state.players[i].is_ai = true
@@ -167,7 +168,8 @@ func _setup_game() -> void:
 	_state.game_won.connect(_on_game_won)
 	_state.robber_moved.connect(_on_robber_moved)
 	_state.bonuses_changed.connect(_refresh_hud)
-	print("[SETUP] GameState OK  (AI players: %d)" % \
+	_state.setup_sub_phase_changed.connect(_on_setup_sub_phase_changed)
+	Log.info("[SETUP] GameState OK  (AI players: %d)" % \
 		_state.players.filter(func(p): return p.is_ai).size())
 
 
@@ -266,8 +268,11 @@ func _refresh_hud() -> void:
 	match _state.phase:
 		GameState.Phase.SETUP:
 			var p = _state.current_player()
-			_hud.set_message("%s: place a free settlement  (%d remaining)" % [
-				p.player_name, p.free_placements_left])
+			if _state.setup_sub_phase == GameState.SetupSubPhase.PLACE_SETTLEMENT:
+				_hud.set_message("%s: place your settlement  (round %d of 2)" % [
+					p.player_name, _state.setup_round])
+			else:
+				_hud.set_message("%s: place a road adjacent to your new settlement" % p.player_name)
 		GameState.Phase.ROLL:
 			_hud.set_message("%s: press Roll Dice" % _state.current_player().player_name)
 		GameState.Phase.BUILD:
@@ -293,7 +298,22 @@ func _on_vertex_slot_clicked(slot: Object) -> void:
 	if _state.phase == GameState.Phase.GAME_OVER:
 		return
 
-	# --- City upgrade: slot occupied by current player ---
+	# --- Setup: free settlement placement ---
+	if _state.phase == GameState.Phase.SETUP:
+		if _state.setup_sub_phase != GameState.SetupSubPhase.PLACE_SETTLEMENT:
+			_hud.set_message("Place a road first!")
+			return
+		if slot.is_occupied:
+			return
+		if not _state._respects_distance_rule(slot.position):
+			_hud.set_message("Too close to another settlement!")
+			return
+		slot.occupy(player.color, pidx)
+		_state.setup_settlement_placed(slot.position)
+		_refresh_hud()
+		return
+
+	# --- City upgrade ---
 	if slot.is_occupied and slot.owner_index == pidx and not slot.is_city:
 		if _state.phase == GameState.Phase.BUILD:
 			if _state.try_place_city(player, slot.position):
@@ -301,21 +321,15 @@ func _on_vertex_slot_clicked(slot: Object) -> void:
 				_refresh_hud()
 		return
 
-	# --- New settlement: slot must be empty ---
+	# --- Paid settlement (BUILD phase) ---
 	if slot.is_occupied:
 		return
-
-	if _state.phase != GameState.Phase.SETUP and _state.phase != GameState.Phase.BUILD:
+	if _state.phase != GameState.Phase.BUILD:
 		return
-
 	if _state.try_place_settlement(player, slot.position):
 		slot.occupy(player.color, pidx)
 		_refresh_hud()
-		if _state.phase == GameState.Phase.SETUP:
-			_state.end_turn()
-			_refresh_hud()
-
-	print("[GAME] Post-placement phase: %s" % _state.phase_name())
+	Log.debug("[GAME] Post-placement phase: %s" % _state.phase_name())
 
 
 # ---------------------------------------------------------------
@@ -326,15 +340,43 @@ func _on_edge_slot_clicked(slot: Object) -> void:
 	var player = _state.current_player()
 	var pidx: int = _state.current_player_index
 
-	if _state.phase != GameState.Phase.BUILD:
-		_hud.set_message("You can only build roads during the BUILD phase.")
+	var is_setup_road: bool = (_state.phase == GameState.Phase.SETUP and
+		_state.setup_sub_phase == GameState.SetupSubPhase.PLACE_ROAD)
+
+	if not is_setup_road and _state.phase != GameState.Phase.BUILD:
+		if _state.phase == GameState.Phase.SETUP:
+			_hud.set_message("Place your settlement first!")
+		else:
+			_hud.set_message("Roads can only be placed during your turn.")
 		return
 
 	if _state.try_place_road(player, pidx, slot.v1, slot.v2):
 		slot.occupy(player.color, pidx)
+		if is_setup_road:
+			_state.setup_road_placed()
 		_refresh_hud()
 	else:
 		_refresh_hud()
+
+
+## Called when setup sub-phase changes (settlement→road) to trigger AI road placement.
+func _on_setup_sub_phase_changed() -> void:
+	_refresh_hud()
+	if _state.current_player().is_ai and _state.phase == GameState.Phase.SETUP:
+		_ai_timer.start()
+
+
+## Returns the edge slot adjacent to last_setup_pos (for AI road placement in setup).
+func _find_setup_road_slot() -> Object:
+	var target: Vector3 = _state.last_setup_pos
+	for slot in _edge_slots:
+		if slot.is_occupied:
+			continue
+		var d1: float = Vector2(slot.v1.x - target.x, slot.v1.z - target.z).length()
+		var d2: float = Vector2(slot.v2.x - target.x, slot.v2.z - target.z).length()
+		if d1 < 0.15 or d2 < 0.15:
+			return slot
+	return null
 
 
 # ---------------------------------------------------------------
@@ -408,9 +450,16 @@ func _process_ai_turn() -> void:
 
 	match _state.phase:
 		GameState.Phase.SETUP:
-			var slot = AIPlayer.pick_setup_vertex(_vertex_slots, _state.tile_data, _state)
-			if slot:
-				_on_vertex_slot_clicked(slot)
+			if _state.setup_sub_phase == GameState.SetupSubPhase.PLACE_SETTLEMENT:
+				var slot = AIPlayer.pick_setup_vertex(_vertex_slots, _state.tile_data, _state)
+				if slot:
+					_on_vertex_slot_clicked(slot)
+			else:  # PLACE_ROAD
+				var road_slot: Object = _find_setup_road_slot()
+				if road_slot:
+					_on_edge_slot_clicked(road_slot)
+				else:
+					Log.error("[AI] No setup road slot found adjacent to %s" % _state.last_setup_pos)
 		GameState.Phase.ROLL:
 			_on_roll_dice()
 		GameState.Phase.ROBBER_MOVE:

@@ -21,14 +21,15 @@ func _test_init_defaults() -> void:
 	_runner.assert_eq(p.free_roads, 0,         "free_roads initializes to 0")
 	_runner.assert_eq(p.dev_cards.size(), 0,   "dev_cards initializes empty")
 	_runner.assert_eq(p.is_ai, false,          "is_ai defaults to false")
-	_runner.assert_eq(p.free_placements_left, 2, "free_placements_left starts at 2")
+	_runner.assert_eq(p.free_placements_left, 0, "free_placements_left starts at 0 (setup managed by game_state)")
 
 
 func _test_can_build_settlement_free() -> void:
 	var p := PlayerData.new("Test", Color.BLUE)
-	# With 2 free placements and 0 resources, should be able to build
-	_runner.assert_true(p.can_build_settlement(),
-		"can_build_settlement is true with free placements")
+	# Setup is managed by game_state.init_setup() now — free_placements_left = 0
+	# With no resources and no free placements, cannot build during BUILD phase
+	_runner.assert_false(p.can_build_settlement(),
+		"can_build_settlement is false with no resources (setup uses game_state now)")
 
 
 func _test_can_build_settlement_resources() -> void:

@@ -9,6 +9,9 @@ const DevCards   = preload("res://scripts/game/dev_cards.gd")
 
 enum Phase { SETUP, ROLL, BUILD, ROBBER_MOVE, GAME_OVER }
 
+## Sub-phases within SETUP — each turn is: place settlement → place road
+enum SetupSubPhase { PLACE_SETTLEMENT, PLACE_ROAD }
+
 const PHASE_NAMES := {
 	Phase.SETUP:       "SETUP",
 	Phase.ROLL:        "ROLL",
@@ -34,6 +37,13 @@ var winner_index: int = -1
 var tile_data: Dictionary = {}        # "q,r" -> {terrain, number, center, area}
 var robber_tile_key: String = ""      # "q,r" of tile holding the robber
 
+# Setup state machine
+var setup_sub_phase: int = SetupSubPhase.PLACE_SETTLEMENT
+var setup_round: int = 1              # 1 = forward order, 2 = snake/reverse
+var _setup_queue: Array = []          # player indices for current round
+var _setup_queue_pos: int = 0         # current position in queue
+var last_setup_pos: Vector3 = Vector3.ZERO  # just-placed settlement (road must connect here)
+
 # Road tracking: Array of {player_index, v1, v2}
 var roads: Array = []
 
@@ -50,7 +60,8 @@ signal turn_changed(player_ref)
 signal dice_rolled(roll)
 signal game_won(player_ref)
 signal robber_moved(new_tile_key)
-signal bonuses_changed()   # longest road / largest army changed
+signal bonuses_changed()          # longest road / largest army changed
+signal setup_sub_phase_changed()  # settlement→road within setup turn
 
 
 # --- Setup ---
@@ -75,12 +86,85 @@ func init_dev_deck() -> void:
 
 
 func init_robber() -> void:
-	# Robber starts on the desert tile
 	for key in tile_data:
 		if tile_data[key].terrain == BoardGen.TerrainType.DESERT:
 			robber_tile_key = key
-			print("[GAMESTATE] Robber starts at desert tile %s" % key)
+			Log.info("[GAMESTATE] Robber starts at desert tile %s" % key)
 			return
+
+
+## Initializes the snake-order setup queue. Call after init_players().
+func init_setup() -> void:
+	setup_round      = 1
+	setup_sub_phase  = SetupSubPhase.PLACE_SETTLEMENT
+	_setup_queue     = Array(range(players.size()))  # [0, 1, …]
+	_setup_queue_pos = 0
+	current_player_index = _setup_queue[0]
+	Log.info("[SETUP] Round 1 order: %s" % str(_setup_queue))
+
+
+## Called after a settlement is placed in SETUP — records position, moves to PLACE_ROAD.
+func setup_settlement_placed(pos: Vector3) -> void:
+	last_setup_pos  = pos
+	var player := current_player()
+	player.place_settlement_free(pos)
+	# Round 2: collect starting resources from adjacent tiles
+	if setup_round == 2:
+		_collect_starting_resources(player, pos)
+	setup_sub_phase = SetupSubPhase.PLACE_ROAD
+	Log.info("[SETUP] %s placed settlement (round %d) → now place a road" % [
+		player.player_name, setup_round])
+	GameEvents.record(GameEvents.EventType.SETTLEMENT_PLACED, player.player_name,
+		{"setup_round": setup_round, "pos_x": pos.x, "pos_z": pos.z})
+	setup_sub_phase_changed.emit()
+	_check_win()
+
+
+## Called after a road is placed in SETUP — advances the queue or ends setup.
+func setup_road_placed() -> void:
+	Log.info("[SETUP] %s placed road" % current_player().player_name)
+	_setup_queue_pos += 1
+
+	if _setup_queue_pos >= _setup_queue.size():
+		# Current round exhausted
+		if setup_round == 1:
+			# Begin round 2 in reverse (snake) order
+			setup_round      = 2
+			_setup_queue      = _setup_queue.duplicate()
+			_setup_queue.reverse()
+			_setup_queue_pos  = 0
+			current_player_index = _setup_queue[0]
+			setup_sub_phase   = SetupSubPhase.PLACE_SETTLEMENT
+			Log.info("[SETUP] Round 2 (snake) order: %s" % str(_setup_queue))
+			turn_changed.emit(current_player())
+		else:
+			# Both rounds done — start main game with Player 1 in ROLL phase
+			phase                = Phase.ROLL
+			current_player_index = 0
+			last_roll            = 0
+			Log.info("[SETUP] Setup complete — main game begins (Player 1 rolls)")
+			_print_all_resources()
+			turn_changed.emit(current_player())
+	else:
+		# Advance to next player in current round
+		current_player_index = _setup_queue[_setup_queue_pos]
+		setup_sub_phase      = SetupSubPhase.PLACE_SETTLEMENT
+		turn_changed.emit(current_player())
+
+
+func _collect_starting_resources(player: RefCounted, settlement_pos: Vector3) -> void:
+	var collected := 0
+	for key in tile_data:
+		var tile: Dictionary = tile_data[key]
+		if tile.number <= 0:
+			continue  # desert
+		if _dist_xz(settlement_pos, tile.center) < PROX:
+			var res := _terrain_to_resource(tile.terrain)
+			if res >= 0:
+				player.add_resource(res)
+				collected += 1
+	Log.info("[SETUP] %s receives %d starting resource(s) from 2nd settlement" % [
+		player.player_name, collected])
 
 
 # --- Accessors ---
@@ -293,17 +377,20 @@ func try_place_road(player: RefCounted, player_idx: int, v1: Vector3, v2: Vector
 	if player_road_count >= MAX_ROADS:
 		print("[GAME] %s has reached max roads (%d)" % [player.player_name, MAX_ROADS])
 		return false
-	var free: bool = player.free_roads > 0
+	# Setup roads are always free (no cost, no Road Building card needed)
+	var setup_free: bool = (phase == Phase.SETUP and setup_sub_phase == SetupSubPhase.PLACE_ROAD)
+	var free: bool = setup_free or player.free_roads > 0
 	if not free and not _has_resources(player, ROAD_COST):
-		print("[GAME] %s cannot afford road" % player.player_name)
+		Log.warn("[GAME] %s cannot afford road" % player.player_name)
 		return false
 	if not _road_is_connected(player, player_idx, v1, v2):
 		print("[GAME] Road not connected to %s's network" % player.player_name)
 		return false
-	if free:
-		player.free_roads -= 1
-	else:
-		_spend_resources(player, ROAD_COST)
+	if not setup_free:
+		if free:
+			player.free_roads -= 1
+		else:
+			_spend_resources(player, ROAD_COST)
 	roads.append({"player_index": player_idx, "v1": v1, "v2": v2})
 	Log.info("[GAME] %s placed road (free=%s)  total: %d" % [player.player_name, free, roads.size()])
 	GameEvents.record(GameEvents.EventType.ROAD_BUILT, player.player_name,
@@ -313,7 +400,11 @@ func try_place_road(player: RefCounted, player_idx: int, v1: Vector3, v2: Vector
 
 
 func _road_is_connected(player: RefCounted, player_idx: int, v1: Vector3, v2: Vector3) -> bool:
-	# Connected if v1 or v2 has player's settlement
+	# During setup: road must connect to the JUST-placed settlement specifically
+	if phase == Phase.SETUP and setup_sub_phase == SetupSubPhase.PLACE_ROAD:
+		return _dist_xz(last_setup_pos, v1) < 0.15 or _dist_xz(last_setup_pos, v2) < 0.15
+
+	# BUILD phase: connected if v1 or v2 has player's settlement
 	for spos in player.settlement_positions:
 		if _dist_xz(spos, v1) < 0.1 or _dist_xz(spos, v2) < 0.1:
 			return true
@@ -546,13 +637,8 @@ func end_turn() -> void:
 	GameEvents.advance_turn(current_player().player_name)
 	current_player_index = (current_player_index + 1) % players.size()
 	last_roll = 0
-	var any_free := false
-	for p in players:
-		if p.free_placements_left > 0:
-			any_free = true
-			break
-	phase = Phase.SETUP if any_free else Phase.ROLL
-	print("[GAME] → %s's turn  [%s]" % [current_player().player_name, phase_name()])
+	phase     = Phase.ROLL
+	Log.info("[GAME] → %s's turn  [%s]" % [current_player().player_name, phase_name()])
 	turn_changed.emit(current_player())
 
 

@@ -31,6 +31,8 @@ func init(main_node: Node3D, game_state: RefCounted) -> void:
 # ---------------------------------------------------------------
 
 func run_debug_play() -> void:
+	# Stop the AI timer — debug controller drives all actions manually
+	_main._ai_timer.stop()
 	print("[DBGPLAY] ============================================================")
 	print("[DBGPLAY] Automated debug play starting")
 	print("[DBGPLAY] Vertices: %d  Edges: %d  Tiles: %d" % [
@@ -40,12 +42,24 @@ func run_debug_play() -> void:
 
 	await _shot("00_initial_board")
 
-	# --- SETUP: 4 settlements in natural turn order ---
+	# --- SETUP: let the state machine drive (settlement + road per turn) ---
 	print("[DBGPLAY] === SETUP PHASE ===")
-	_auto_place_settlement(5)   # P1 turn
-	_auto_place_settlement(20)  # P2 turn (auto-cycled)
-	_auto_place_settlement(15)  # P1 turn
-	_auto_place_settlement(40)  # P2 turn
+	while _state.phase == PHASE_SETUP:
+		if _state.setup_sub_phase == 0:  # PLACE_SETTLEMENT
+			var slot = AIPlayer.pick_setup_vertex(_main._vertex_slots, _state.tile_data, _state)
+			if slot:
+				_main._on_vertex_slot_clicked(slot)
+			else:
+				print("[DBGPLAY] ERROR: no valid setup vertex")
+				break
+		else:  # PLACE_ROAD
+			var road_slot: Object = _main._find_setup_road_slot()
+			if road_slot:
+				_main._on_edge_slot_clicked(road_slot)
+			else:
+				print("[DBGPLAY] ERROR: no adjacent road slot")
+				break
+		await get_tree().process_frame
 	await _shot("01_setup_complete")
 	_print_all_state()
 
@@ -201,6 +215,8 @@ func run_debug_play() -> void:
 # ---------------------------------------------------------------
 
 func run_full_game() -> void:
+	# Stop the AI timer — debug controller drives all turns
+	_main._ai_timer.stop()
 	const TIMEOUT_SECS := 300.0  # 5 minute safety cutoff
 	print("[FULLGAME] ============================================================")
 	print("[FULLGAME] Full AI game starting  (timeout: %.0fs)" % TIMEOUT_SECS)
@@ -210,20 +226,22 @@ func run_full_game() -> void:
 		p.is_ai = true
 	print("[FULLGAME] All %d players set as AI" % _state.players.size())
 
-	# --- SETUP: AI picks best vertices ---
+	# --- SETUP: AI places settlement + road each turn (correct Catan setup) ---
 	print("[FULLGAME] === SETUP ===")
-	var setups_needed: int = _state.players.size() * 2
-	while _state.phase == PHASE_SETUP and setups_needed > 0:
-		# Pass state so AI respects distance rule when picking setup vertex
-		var slot = AIPlayer.pick_setup_vertex(_main._vertex_slots, _state.tile_data, _state)
-		if slot == null:
-			print("[FULLGAME] ERROR: no valid vertex for setup (distance rule blocked all)!")
-			break
-		var before_free: int = _state.current_player().free_placements_left
-		_main._on_vertex_slot_clicked(slot)
-		# Only decrement if placement actually succeeded
-		if _state.current_player().free_placements_left < before_free or _state.phase != PHASE_SETUP:
-			setups_needed -= 1
+	while _state.phase == PHASE_SETUP:
+		if _state.setup_sub_phase == 0:  # PLACE_SETTLEMENT
+			var slot = AIPlayer.pick_setup_vertex(_main._vertex_slots, _state.tile_data, _state)
+			if slot == null:
+				print("[FULLGAME] ERROR: no valid vertex for setup!")
+				break
+			_main._on_vertex_slot_clicked(slot)
+		else:  # PLACE_ROAD
+			var road_slot: Object = _main._find_setup_road_slot()
+			if road_slot:
+				_main._on_edge_slot_clicked(road_slot)
+			else:
+				print("[FULLGAME] ERROR: no adjacent road slot for setup!")
+				break
 		await get_tree().process_frame
 	await _shot("fg_00_setup_complete")
 	_print_all_state()
@@ -330,22 +348,33 @@ func _ai_play_card(player: RefCounted, card_type: int, pidx: int) -> void:
 # Settlement helpers
 # ---------------------------------------------------------------
 
-## Place settlement for whoever's current turn (SETUP mode, auto-cycles)
+## Place settlement + road for whoever's current turn (correct Catan setup order).
 func _auto_place_settlement(slot_idx: int) -> void:
 	if slot_idx >= _main._vertex_slots.size():
 		print("[DBGPLAY] WARN: vertex slot %d out of range" % slot_idx)
 		return
 	var p_name: String = _state.current_player().player_name
+
+	# 1. Place settlement
 	var slot = _main._vertex_slots[slot_idx]
-	if slot.is_occupied:
-		# Find next free slot
-		for i in _main._vertex_slots.size():
-			if not _main._vertex_slots[i].is_occupied:
-				slot = _main._vertex_slots[i]
-				break
+	if slot.is_occupied or not _state._respects_distance_rule(slot.position):
+		# Find best free slot respecting distance rule
+		slot = AIPlayer.pick_setup_vertex(_main._vertex_slots, _state.tile_data, _state)
+		if slot == null:
+			print("[DBGPLAY] WARN: no valid setup vertex found")
+			return
 	_main._on_vertex_slot_clicked(slot)
-	print("[DBGPLAY] %s settlement at vertex idx ~%d  pos=%s  vp=%d" % [
-		p_name, slot_idx, slot.position, _state.players[_state.current_player_index].victory_points])
+	print("[DBGPLAY] %s settlement at %s  vp=%d" % [
+		p_name, slot.position, _state.current_player().victory_points])
+
+	# 2. Place road adjacent to that settlement (state is now PLACE_ROAD)
+	if _state.setup_sub_phase == 1:  # PLACE_ROAD
+		var road_slot: Object = _main._find_setup_road_slot()
+		if road_slot:
+			_main._on_edge_slot_clicked(road_slot)
+			print("[DBGPLAY] %s road at %s" % [p_name, road_slot.position])
+		else:
+			print("[DBGPLAY] WARN: no adjacent road slot found for setup")
 
 
 ## God-mode: place settlement for specific player ignoring costs/turn

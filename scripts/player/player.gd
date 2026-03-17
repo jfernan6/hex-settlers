@@ -21,7 +21,7 @@ var resources: Dictionary       # int -> int
 var settlement_positions: Array # Array[Vector3]
 var city_positions: Array       # Array[Vector3] — subset of settlement_positions
 var victory_points: int = 0
-var free_placements_left: int = 2
+var free_placements_left: int = 0  # legacy — setup now managed by game_state.init_setup()
 
 # Development cards
 var dev_cards: Array = []   # Array of DevCards.Type ints (playable hand)
@@ -53,28 +53,33 @@ func add_resource(res: int, amount: int = 1) -> void:
 
 
 func can_build_settlement() -> bool:
-	# Standard Catan: max 5 settlement pieces total (cities consume a settlement slot)
+	# Piece limit check
 	var active_settlements: int = settlement_positions.size() - city_positions.size()
 	if active_settlements >= 5:
 		return false
-	if free_placements_left > 0:
-		return true
+	# Resource check (BUILD phase only — setup uses place_settlement_free)
 	for r in SETTLEMENT_COST:
 		if resources.get(r, 0) < SETTLEMENT_COST[r]:
 			return false
 	return true
 
 
-func place_settlement(pos: Vector3) -> void:
-	if free_placements_left > 0:
-		free_placements_left -= 1
-	else:
-		for r in SETTLEMENT_COST:
-			resources[r] -= SETTLEMENT_COST[r]
+## Free placement during setup — no resource cost.
+func place_settlement_free(pos: Vector3) -> void:
 	settlement_positions.append(pos)
 	victory_points += 1
-	Log.info("[PLAYER] %s placed settlement @ (%.1f,%.1f) | VP:%d | free left:%d" % [
-		player_name, pos.x, pos.z, victory_points, free_placements_left])
+	Log.info("[PLAYER] %s placed setup settlement @ (%.1f,%.1f) | VP:%d" % [
+		player_name, pos.x, pos.z, victory_points])
+
+
+## Paid placement during BUILD phase — deducts resources.
+func place_settlement(pos: Vector3) -> void:
+	for r in SETTLEMENT_COST:
+		resources[r] -= SETTLEMENT_COST[r]
+	settlement_positions.append(pos)
+	victory_points += 1
+	Log.info("[PLAYER] %s placed settlement @ (%.1f,%.1f) | VP:%d" % [
+		player_name, pos.x, pos.z, victory_points])
 	GameEvents.record(GameEvents.EventType.SETTLEMENT_PLACED, player_name, {
 		"pos_x": pos.x, "pos_z": pos.z, "vp": victory_points})
 
