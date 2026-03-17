@@ -2,6 +2,8 @@ extends Node3D
 
 ## Phase 5: Roads, cities, robber, number tokens, full game loop.
 
+## Sprint A: dev cards, AI player, bank trade, longest road, largest army.
+
 const BoardGenerator    = preload("res://scripts/board/board_generator.gd")
 const HexGrid           = preload("res://scripts/board/hex_grid.gd")
 const HexVertices       = preload("res://scripts/board/hex_vertices.gd")
@@ -11,23 +13,29 @@ const EdgeSlot          = preload("res://scripts/board/edge_slot.gd")
 const GameState         = preload("res://scripts/game/game_state.gd")
 const HUD               = preload("res://scripts/ui/hud.gd")
 const DebugController   = preload("res://scripts/game/debug_controller.gd")
+const DevCards          = preload("res://scripts/game/dev_cards.gd")
+const AIPlayer          = preload("res://scripts/game/ai_player.gd")
+const PlayerData        = preload("res://scripts/player/player.gd")
 
 var _state: RefCounted
 var _hud:   CanvasLayer
 var _robber: MeshInstance3D
 
-# Slot arrays — indexed so debug controller can address them by position
 var _vertex_slots: Array = []
 var _edge_slots:   Array = []
 
 const NUM_PLAYERS := 2
 
-# God mode state
-var _god_forced_roll: int = 0  # 0 = not forced; 2-12 = force next roll to this
+# God mode
+var _god_forced_roll: int = 0
+
+# AI
+var _ai_timer: Timer     # fires after short delay to let frame render before AI acts
+const AI_DELAY := 0.5    # seconds between AI actions
 
 
 func _ready() -> void:
-	print("=== [INIT] Hex Settlers — Phase 5 starting ===")
+	print("=== [INIT] Hex Settlers — Sprint A starting ===")
 	_setup_environment()
 	_setup_lighting()
 	_setup_camera()
@@ -36,6 +44,7 @@ func _ready() -> void:
 	_create_vertex_slots()
 	_create_edge_slots()
 	_create_robber()
+	_create_ai_timer()
 	_create_hud()
 	_refresh_hud()
 	print("=== [DONE] Scene ready — children: %d ===" % get_child_count())
@@ -51,6 +60,12 @@ func _ready() -> void:
 		dc.init(self, _state)
 		add_child(dc)
 		await dc.run_debug_play()
+
+	if "--debug-fullgame" in OS.get_cmdline_user_args():
+		var dc := DebugController.new()
+		dc.init(self, _state)
+		add_child(dc)
+		await dc.run_full_game()
 
 
 func _input(event: InputEvent) -> void:
@@ -110,11 +125,26 @@ func _setup_camera() -> void:
 func _setup_game() -> void:
 	_state = GameState.new()
 	_state.init_players(NUM_PLAYERS)
+	_state.init_dev_deck()
+	# Mark player 2+ as AI (player 1 = human by default)
+	for i in range(1, _state.players.size()):
+		_state.players[i].is_ai = true
 	_state.turn_changed.connect(_on_turn_changed)
 	_state.dice_rolled.connect(_on_dice_rolled)
 	_state.game_won.connect(_on_game_won)
 	_state.robber_moved.connect(_on_robber_moved)
-	print("[SETUP] GameState OK")
+	_state.bonuses_changed.connect(_refresh_hud)
+	print("[SETUP] GameState OK  (AI players: %d)" % \
+		_state.players.filter(func(p): return p.is_ai).size())
+
+
+func _create_ai_timer() -> void:
+	_ai_timer = Timer.new()
+	_ai_timer.wait_time = AI_DELAY
+	_ai_timer.one_shot = true
+	_ai_timer.timeout.connect(_process_ai_turn)
+	add_child(_ai_timer)
+	print("[SETUP] AI timer OK")
 
 
 # ---------------------------------------------------------------
@@ -191,6 +221,7 @@ func _create_hud() -> void:
 	_hud = HUD.new()
 	_hud.roll_dice_pressed.connect(_on_roll_dice)
 	_hud.end_turn_pressed.connect(_on_end_turn)
+	_hud.buy_dev_card_pressed.connect(_try_buy_dev_card)
 	add_child(_hud)
 	print("[HUD] Created")
 
@@ -198,7 +229,7 @@ func _create_hud() -> void:
 func _refresh_hud() -> void:
 	if _hud == null or _state.players.is_empty():
 		return
-	_hud.refresh(_state.current_player(), _state.phase_name(), _state.last_roll)
+	_hud.refresh(_state.current_player(), _state.phase_name(), _state.last_roll, _state)
 	match _state.phase:
 		GameState.Phase.SETUP:
 			var p = _state.current_player()
@@ -329,6 +360,105 @@ func _on_end_turn() -> void:
 
 func _on_turn_changed(_player: Object) -> void:
 	_refresh_hud()
+	if _state.current_player().is_ai and _state.phase != GameState.Phase.GAME_OVER:
+		_ai_timer.start()
+
+
+# ---------------------------------------------------------------
+# AI turn processing
+# ---------------------------------------------------------------
+
+func _process_ai_turn() -> void:
+	var player = _state.current_player()
+	if not player.is_ai or _state.phase == GameState.Phase.GAME_OVER:
+		return
+
+	match _state.phase:
+		GameState.Phase.SETUP:
+			var slot = AIPlayer.pick_setup_vertex(_vertex_slots, _state.tile_data, _state)
+			if slot:
+				_on_vertex_slot_clicked(slot)
+		GameState.Phase.ROLL:
+			_on_roll_dice()
+		GameState.Phase.ROBBER_MOVE:
+			var key: String = AIPlayer.pick_robber_tile(_state, _state.current_player_index)
+			if key != "":
+				_set_tile_picking(false)
+				_state.move_robber(key)
+				_update_robber_position()
+				_refresh_hud()
+			_ai_timer.start()  # re-enter BUILD phase
+		GameState.Phase.BUILD:
+			var pidx: int = _state.current_player_index
+			var decision: Dictionary = AIPlayer.decide_build(player, _state, _vertex_slots, _edge_slots)
+			print("[AI] %s → %s" % [player.player_name, decision.action])
+			match decision.action:
+				"city":
+					_on_vertex_slot_clicked(decision.params.slot)
+				"settlement":
+					_on_vertex_slot_clicked(decision.params.slot)
+				"road":
+					_on_edge_slot_clicked(decision.params.slot)
+				"dev_card":
+					_try_buy_dev_card()
+				"play_card":
+					_try_play_dev_card(player, decision.params.card, pidx)
+				"bank_trade":
+					_state.bank_trade(player, decision.params.give, decision.params.recv)
+					_refresh_hud()
+					_ai_timer.start()   # keep building this turn
+					return
+				"end_turn":
+					_on_end_turn()
+					return
+			_refresh_hud()
+			# Continue building if AI still has moves
+			if _state.phase == GameState.Phase.BUILD and player.is_ai:
+				_ai_timer.start()
+
+
+# ---------------------------------------------------------------
+# Dev card handlers (human and AI)
+# ---------------------------------------------------------------
+
+func _try_buy_dev_card() -> void:
+	var player = _state.current_player()
+	if _state.buy_dev_card(player):
+		_refresh_hud()
+
+
+func _try_play_dev_card(player: RefCounted, card_type: int, pidx: int) -> void:
+	match card_type:
+		DevCards.Type.KNIGHT:
+			if _state.play_knight(player, pidx):
+				if player.is_ai:
+					_ai_timer.start()   # process ROBBER_MOVE on next tick
+				else:
+					_set_tile_picking(true)
+				_refresh_hud()
+		DevCards.Type.ROAD_BUILDING:
+			_state.play_road_building(player)
+			_refresh_hud()
+		DevCards.Type.YEAR_OF_PLENTY:
+			# AI picks 2 most-needed resources; human gets ore+grain as default
+			var r1 := AIPlayer.most_needed_resource(player) if player.is_ai else PlayerData.RES_ORE
+			var r2 := PlayerData.RES_GRAIN
+			_state.play_year_of_plenty(player, r1, r2)
+			_refresh_hud()
+		DevCards.Type.MONOPOLY:
+			# AI monopolizes the resource opponents have most of
+			var best_res := 0
+			var best_amt := -1
+			for r in [0, 1, 2, 3, 4]:
+				var total := 0
+				for i in _state.players.size():
+					if i != _state.current_player_index:
+						total += _state.players[i].resources.get(r, 0)
+				if total > best_amt:
+					best_amt = total
+					best_res = r
+			_state.play_monopoly(player, best_res)
+			_refresh_hud()
 
 
 func _on_dice_rolled(_roll: int) -> void:

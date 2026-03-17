@@ -23,6 +23,14 @@ var city_positions: Array       # Array[Vector3] — subset of settlement_positi
 var victory_points: int = 0
 var free_placements_left: int = 2
 
+# Development cards
+var dev_cards: Array = []   # Array of DevCards.Type ints (playable hand)
+var knight_count: int = 0   # total knights played (for Largest Army tracking)
+var free_roads: int = 0     # free roads remaining from Road Building card
+
+# AI flag — set true for computer-controlled players
+var is_ai: bool = false
+
 
 func _init(p_name: String, p_color: Color) -> void:
 	player_name = p_name
@@ -41,6 +49,10 @@ func add_resource(res: int, amount: int = 1) -> void:
 
 
 func can_build_settlement() -> bool:
+	# Standard Catan: max 5 settlement pieces total (cities consume a settlement slot)
+	var active_settlements: int = settlement_positions.size() - city_positions.size()
+	if active_settlements >= 5:
+		return false
 	if free_placements_left > 0:
 		return true
 	for r in SETTLEMENT_COST:
@@ -71,9 +83,13 @@ func resource_summary() -> String:
 
 
 func debug_summary() -> String:
-	return "[%s] VP:%d  Free:%d  Resources: %s  Settlements:%d" % [
-		player_name, victory_points, free_placements_left,
-		_short_resources(), settlement_positions.size()]
+	var card_str := "cards:%d" % dev_cards.size()
+	return "[%s%s] VP:%d  Free:%d  Res:%s  S:%d  %s  KN:%d" % [
+		player_name,
+		" (AI)" if is_ai else "",
+		victory_points, free_placements_left,
+		_short_resources(), settlement_positions.size(),
+		card_str, knight_count]
 
 
 func _short_resources() -> String:

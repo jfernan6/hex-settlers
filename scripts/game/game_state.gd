@@ -5,6 +5,7 @@ extends RefCounted
 const HexGrid    = preload("res://scripts/board/hex_grid.gd")
 const BoardGen   = preload("res://scripts/board/board_generator.gd")
 const PlayerData = preload("res://scripts/player/player.gd")
+const DevCards   = preload("res://scripts/game/dev_cards.gd")
 
 enum Phase { SETUP, ROLL, BUILD, ROBBER_MOVE, GAME_OVER }
 
@@ -16,9 +17,13 @@ const PHASE_NAMES := {
 	Phase.GAME_OVER:   "GAME OVER",
 }
 
-const WIN_VP       := 10
+const WIN_VP          := 10
+const MAX_SETTLEMENTS := 5   # standard Catan piece limits
+const MAX_CITIES      := 4
+const MAX_ROADS       := 15
 const ROAD_COST    := {PlayerData.RES_LUMBER: 1, PlayerData.RES_BRICK: 1}
 const CITY_COST    := {PlayerData.RES_GRAIN: 2, PlayerData.RES_ORE: 3}
+const DEV_COST     := {PlayerData.RES_ORE: 1, PlayerData.RES_GRAIN: 1, PlayerData.RES_WOOL: 1}
 const PROX         := HexGrid.HEX_SIZE * 1.15  # adjacency radius
 
 var players: Array = []
@@ -29,13 +34,23 @@ var winner_index: int = -1
 var tile_data: Dictionary = {}        # "q,r" -> {terrain, number, center, area}
 var robber_tile_key: String = ""      # "q,r" of tile holding the robber
 
-# Road tracking: Array of {player_index, v1, v2, midpoint}
+# Road tracking: Array of {player_index, v1, v2}
 var roads: Array = []
+
+# Dev card deck
+var dev_deck: Array = []
+
+# Bonus VP tracking
+var longest_road_holder: int  = -1
+var longest_road_length: int  = 0
+var largest_army_holder: int  = -1
+var largest_army_size: int    = 0
 
 signal turn_changed(player_ref)
 signal dice_rolled(roll)
 signal game_won(player_ref)
 signal robber_moved(new_tile_key)
+signal bonuses_changed()   # longest road / largest army changed
 
 
 # --- Setup ---
@@ -53,6 +68,10 @@ func init_players(num_players: int) -> void:
 	print("[GAMESTATE] %d players ready" % players.size())
 	for p in players:
 		print("  %s" % p.debug_summary())
+
+
+func init_dev_deck() -> void:
+	dev_deck = DevCards.make_deck()
 
 
 func init_robber() -> void:
@@ -85,6 +104,7 @@ func roll_dice() -> int:
 
 	if last_roll == 7:
 		print("[GAME] Rolled 7 — robber must move!")
+		_apply_robber_discard()  # Players with 8+ cards must discard half
 		phase = Phase.ROBBER_MOVE
 	else:
 		_collect_resources(last_roll)
@@ -95,6 +115,31 @@ func roll_dice() -> int:
 ## Public wrapper for debug controller
 func debug_collect(roll: int) -> void:
 	_collect_resources(roll)
+
+
+## Robber discard rule: any player holding 8+ cards must discard half (rounded down).
+func _apply_robber_discard() -> void:
+	for p in players:
+		var total := 0
+		for r in p.resources:
+			total += p.resources[r]
+		if total >= 8:
+			var discard_count: int = total / 2
+			var discarded := 0
+			while discarded < discard_count:
+				# Discard from largest pile first
+				var max_r := 0
+				var max_amt := -1
+				for r in p.resources:
+					if p.resources[r] > max_amt:
+						max_amt = p.resources[r]
+						max_r = r
+				if max_amt <= 0:
+					break
+				p.resources[max_r] -= 1
+				discarded += 1
+			print("[GAME] %s had %d cards — discarded %d (robber rule)" % [
+				p.player_name, total, discarded])
 
 
 func _collect_resources(roll: int) -> void:
@@ -196,12 +241,29 @@ func try_place_settlement(player: RefCounted, pos: Vector3) -> bool:
 	if not player.can_build_settlement():
 		print("[GAME] %s cannot afford settlement" % player.player_name)
 		return false
+	# Catan distance rule: no settlement within 1 edge of any other settlement
+	if not _respects_distance_rule(pos):
+		print("[GAME] %s: placement violates distance rule (too close to existing settlement)" % player.player_name)
+		return false
 	player.place_settlement(pos)
 	_check_win()
 	return true
 
 
+## Returns true if `pos` is at least 2 edges away from all existing settlements.
+## Adjacent vertex distance for our grid ≈ HEX_SIZE (1.05 units).
+func _respects_distance_rule(pos: Vector3) -> bool:
+	for p in players:
+		for spos in p.settlement_positions:
+			if _dist_xz(pos, spos) < HexGrid.HEX_SIZE * 1.05:
+				return false
+	return true
+
+
 func try_place_city(player: RefCounted, settlement_pos: Vector3) -> bool:
+	if player.city_positions.size() >= MAX_CITIES:
+		print("[GAME] %s has reached max cities (%d)" % [player.player_name, MAX_CITIES])
+		return false
 	if not _has_resources(player, CITY_COST):
 		print("[GAME] %s cannot afford city (needs 2 Grain + 3 Ore)" % player.player_name)
 		return false
@@ -216,15 +278,25 @@ func try_place_city(player: RefCounted, settlement_pos: Vector3) -> bool:
 # --- Roads ---
 
 func try_place_road(player: RefCounted, player_idx: int, v1: Vector3, v2: Vector3) -> bool:
-	if not _has_resources(player, ROAD_COST):
-		print("[GAME] %s cannot afford road (needs 1 Lumber + 1 Brick)" % player.player_name)
+	# Piece limit
+	var player_road_count: int = roads.filter(func(r): return r.player_index == player_idx).size()
+	if player_road_count >= MAX_ROADS:
+		print("[GAME] %s has reached max roads (%d)" % [player.player_name, MAX_ROADS])
+		return false
+	var free: bool = player.free_roads > 0
+	if not free and not _has_resources(player, ROAD_COST):
+		print("[GAME] %s cannot afford road" % player.player_name)
 		return false
 	if not _road_is_connected(player, player_idx, v1, v2):
 		print("[GAME] Road not connected to %s's network" % player.player_name)
 		return false
-	_spend_resources(player, ROAD_COST)
+	if free:
+		player.free_roads -= 1
+	else:
+		_spend_resources(player, ROAD_COST)
 	roads.append({"player_index": player_idx, "v1": v1, "v2": v2})
-	print("[GAME] %s placed road  roads total: %d" % [player.player_name, roads.size()])
+	print("[GAME] %s placed road (free=%s)  total roads: %d" % [player.player_name, free, roads.size()])
+	update_longest_road()
 	return true
 
 
@@ -244,6 +316,204 @@ func _road_is_connected(player: RefCounted, player_idx: int, v1: Vector3, v2: Ve
 		if _dist_xz(rv2, v1) < 0.1 or _dist_xz(rv2, v2) < 0.1:
 			return true
 	return false
+
+
+# --- Development cards ---
+
+func buy_dev_card(player: RefCounted) -> bool:
+	if dev_deck.is_empty():
+		print("[GAME] Dev deck is empty!")
+		return false
+	if not _has_resources(player, DEV_COST):
+		print("[GAME] %s cannot afford dev card (needs 1 Ore+Grain+Wool)" % player.player_name)
+		return false
+	_spend_resources(player, DEV_COST)
+	var card: int = dev_deck.pop_back()
+	if card == DevCards.Type.VP:
+		player.victory_points += 1
+		print("[GAME] %s drew VP card — VP now %d  (deck: %d left)" % [
+			player.player_name, player.victory_points, dev_deck.size()])
+		_check_win()
+	else:
+		player.dev_cards.append(card)
+		print("[GAME] %s drew %s  (deck: %d left, hand: %s)" % [
+			player.player_name, DevCards.NAMES[card], dev_deck.size(),
+			DevCards.hand_summary(player.dev_cards)])
+	return true
+
+
+func play_knight(player: RefCounted, player_idx: int) -> bool:
+	if DevCards.Type.KNIGHT not in player.dev_cards:
+		return false
+	player.dev_cards.erase(DevCards.Type.KNIGHT)
+	player.knight_count += 1
+	print("[GAME] %s plays Knight (total knights: %d)" % [player.player_name, player.knight_count])
+	_check_largest_army()
+	phase = Phase.ROBBER_MOVE
+	return true
+
+
+func play_road_building(player: RefCounted) -> bool:
+	if DevCards.Type.ROAD_BUILDING not in player.dev_cards:
+		return false
+	player.dev_cards.erase(DevCards.Type.ROAD_BUILDING)
+	player.free_roads += 2
+	print("[GAME] %s plays Road Building — 2 free roads granted" % player.player_name)
+	return true
+
+
+func play_year_of_plenty(player: RefCounted, res1: int, res2: int) -> bool:
+	if DevCards.Type.YEAR_OF_PLENTY not in player.dev_cards:
+		return false
+	player.dev_cards.erase(DevCards.Type.YEAR_OF_PLENTY)
+	player.add_resource(res1)
+	player.add_resource(res2)
+	print("[GAME] %s plays Year of Plenty: +1 %s +1 %s" % [
+		player.player_name, PlayerData.RES_NAMES[res1], PlayerData.RES_NAMES[res2]])
+	return true
+
+
+func play_monopoly(player: RefCounted, res: int) -> bool:
+	if DevCards.Type.MONOPOLY not in player.dev_cards:
+		return false
+	player.dev_cards.erase(DevCards.Type.MONOPOLY)
+	var total := 0
+	for p in players:
+		if p == player:
+			continue
+		var amt: int = p.resources.get(res, 0)
+		if amt > 0:
+			p.resources[res] = 0
+			total += amt
+	player.add_resource(res, total)
+	print("[GAME] %s plays Monopoly on %s — stole %d total" % [
+		player.player_name, PlayerData.RES_NAMES[res], total])
+	return true
+
+
+# --- Bank trading ---
+
+func bank_trade(player: RefCounted, give_res: int, recv_res: int, rate: int = 4) -> bool:
+	if player.resources.get(give_res, 0) < rate:
+		print("[GAME] %s cannot afford bank trade (%d %s needed)" % [
+			player.player_name, rate, PlayerData.RES_NAMES[give_res]])
+		return false
+	player.resources[give_res] -= rate
+	player.add_resource(recv_res)
+	print("[GAME] %s bank trade: %d %s → 1 %s" % [
+		player.player_name, rate,
+		PlayerData.RES_NAMES[give_res], PlayerData.RES_NAMES[recv_res]])
+	return true
+
+
+## Returns the cheapest bank trade the player can make, or -1 if none.
+## Returns [give_res, recv_res] pair, or [] if no trade possible.
+func best_bank_trade(player: RefCounted) -> Array:
+	# Find surplus resource (4+) and a needed resource (0)
+	var surplus := -1
+	for r in [0, 1, 2, 3, 4]:
+		if player.resources.get(r, 0) >= 4:
+			surplus = r
+			break
+	if surplus < 0:
+		return []
+	# Find the resource they need most (fewest in hand)
+	var need := -1
+	var min_amt := 999
+	for r in [0, 1, 2, 3, 4]:
+		if r == surplus:
+			continue
+		if player.resources.get(r, 0) < min_amt:
+			min_amt = player.resources.get(r, 0)
+			need = r
+	if need < 0:
+		return []
+	return [surplus, need]
+
+
+# --- Longest Road ---
+
+func update_longest_road() -> void:
+	var changed := false
+	for i in players.size():
+		var length := _compute_road_length(i)
+		if length >= 5 and length > longest_road_length:
+			if longest_road_holder != i:
+				if longest_road_holder >= 0:
+					players[longest_road_holder].victory_points -= 2
+					print("[GAME] %s loses Longest Road" % players[longest_road_holder].player_name)
+				longest_road_holder = i
+				longest_road_length = length
+				players[i].victory_points += 2
+				print("[GAME] %s takes Longest Road (%d) — VP:%d" % [
+					players[i].player_name, length, players[i].victory_points])
+				changed = true
+				_check_win()
+	if changed:
+		bonuses_changed.emit()
+
+
+func _compute_road_length(player_idx: int) -> int:
+	# Build vertex adjacency from this player's roads
+	var adj: Dictionary = {}
+	for road in roads:
+		if road.player_index != player_idx:
+			continue
+		var k1 := _vkey(road.v1)
+		var k2 := _vkey(road.v2)
+		if k1 not in adj: adj[k1] = []
+		if k2 not in adj: adj[k2] = []
+		if k2 not in adj[k1]: adj[k1].append(k2)
+		if k1 not in adj[k2]: adj[k2].append(k1)
+	if adj.is_empty():
+		return 0
+	var max_len := 0
+	for start in adj:
+		var visited_edges: Array = []
+		var length := _dfs_road(adj, start, visited_edges)
+		if length > max_len:
+			max_len = length
+	return max_len
+
+
+func _dfs_road(adj: Dictionary, current: String, visited_edges: Array) -> int:
+	var max_len := 0
+	for neighbor in adj.get(current, []):
+		var edge_key: String = (current + "|" + neighbor) if current < neighbor else (neighbor + "|" + current)
+		if edge_key in visited_edges:
+			continue
+		visited_edges.append(edge_key)
+		var length := 1 + _dfs_road(adj, neighbor, visited_edges)
+		visited_edges.pop_back()
+		if length > max_len:
+			max_len = length
+	return max_len
+
+
+func _vkey(v: Vector3) -> String:
+	return "%d_%d" % [roundi(v.x * 100), roundi(v.z * 100)]
+
+
+# --- Largest Army ---
+
+func _check_largest_army() -> void:
+	var changed := false
+	for i in players.size():
+		var knights: int = players[i].knight_count
+		if knights >= 3 and knights > largest_army_size:
+			if largest_army_holder != i:
+				if largest_army_holder >= 0:
+					players[largest_army_holder].victory_points -= 2
+					print("[GAME] %s loses Largest Army" % players[largest_army_holder].player_name)
+				largest_army_holder = i
+				largest_army_size = knights
+				players[i].victory_points += 2
+				print("[GAME] %s takes Largest Army (%d knights) — VP:%d" % [
+					players[i].player_name, knights, players[i].victory_points])
+				changed = true
+				_check_win()
+	if changed:
+		bonuses_changed.emit()
 
 
 # --- Turn management ---
