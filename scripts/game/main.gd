@@ -37,10 +37,24 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F12:
-		_take_screenshot()
+	if event is InputEventKey and event.pressed:
+		match event.keycode:
+			KEY_F11:
+				_toggle_fullscreen()
+			KEY_F12:
+				_take_screenshot()
 	if event.is_action_pressed("ui_cancel"):
 		get_tree().quit()
+
+
+func _toggle_fullscreen() -> void:
+	var mode := DisplayServer.window_get_mode()
+	if mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+		print("[DISPLAY] Windowed (maximized)")
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+		print("[DISPLAY] Fullscreen")
 
 
 # ---------------------------------------------------------------

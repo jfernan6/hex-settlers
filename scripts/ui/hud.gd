@@ -13,6 +13,7 @@ var _dice_label: Label
 var _roll_btn: Button
 var _end_btn: Button
 var _message_label: Label
+var _font_size: int = 15
 
 
 func _ready() -> void:
@@ -21,20 +22,27 @@ func _ready() -> void:
 
 
 func _build_ui() -> void:
+	# Scale panel based on actual viewport so it looks right at any resolution
+	var vp: Vector2  = get_viewport().get_visible_rect().size
+	var pw: float    = maxf(260.0, vp.x * 0.18)   # 18% of screen width, min 260px
+	var ph: float    = maxf(420.0, vp.y * 0.55)   # 55% of screen height, min 420px
+	_font_size       = int(maxf(14.0, vp.x * 0.012)) # font scales with width
+	print("[HUD] vp=%s  panel=%.0fx%.0f  font=%d" % [vp, pw, ph, _font_size])
+
 	# ---- Right info panel ----
 	var panel := PanelContainer.new()
 	panel.anchor_left   = 1.0
 	panel.anchor_right  = 1.0
 	panel.anchor_top    = 0.0
 	panel.anchor_bottom = 0.0
-	panel.offset_left   = -220.0
-	panel.offset_right  = -10.0
-	panel.offset_top    = 10.0
-	panel.offset_bottom = 400.0
+	panel.offset_left   = -(pw + 12.0)
+	panel.offset_right  = -12.0
+	panel.offset_top    = 12.0
+	panel.offset_bottom = ph + 12.0
 	add_child(panel)
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 6)
+	vbox.add_theme_constant_override("separation", 8)
 	panel.add_child(vbox)
 
 	_player_label   = _lbl("--- Player ---")
@@ -68,8 +76,8 @@ func _build_ui() -> void:
 	msg_panel.anchor_top    = 1.0
 	msg_panel.anchor_bottom = 1.0
 	msg_panel.offset_left   = 5.0
-	msg_panel.offset_right  = -230.0
-	msg_panel.offset_top    = -48.0
+	msg_panel.offset_right  = -295.0
+	msg_panel.offset_top    = -56.0
 	msg_panel.offset_bottom = -5.0
 	add_child(msg_panel)
 
@@ -103,6 +111,7 @@ func set_message(msg: String) -> void:
 func _lbl(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
+	l.add_theme_font_size_override("font_size", _font_size)
 	return l
 
 
@@ -113,5 +122,7 @@ func _sep() -> HSeparator:
 func _btn(text: String, callback: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
+	b.add_theme_font_size_override("font_size", _font_size)
+	b.custom_minimum_size = Vector2(0, max(36, _font_size * 2.5))
 	b.pressed.connect(callback)
 	return b
