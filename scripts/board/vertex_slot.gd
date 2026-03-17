@@ -8,6 +8,8 @@ extends Area3D
 signal slot_clicked(slot)
 
 var is_occupied: bool = false
+var is_city: bool = false
+var owner_index: int = -1  # player index, -1 = empty
 
 var _mat: StandardMaterial3D
 var _mesh_instance: MeshInstance3D
@@ -52,8 +54,8 @@ func _build_collision() -> void:
 
 func _on_input_event(_camera: Camera3D, event: InputEvent, _pos: Vector3, _normal: Vector3, _shape_idx: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if not is_occupied:
-			slot_clicked.emit(self)
+		# Always emit — main.gd decides whether to place settlement or upgrade to city
+		slot_clicked.emit(self)
 
 
 func _on_hover_start() -> void:
@@ -67,8 +69,18 @@ func _on_hover_end() -> void:
 
 
 ## Called when a player places a settlement here.
-func occupy(player_color: Color) -> void:
+func occupy(player_color: Color, p_owner_index: int) -> void:
 	is_occupied = true
+	owner_index = p_owner_index
 	_mat.albedo_color = player_color
-	_mesh_instance.scale = Vector3(1.8, 2.2, 1.8)  # taller = settlement shape
-	print("[VERTEX] Settlement placed at world pos %s" % position)
+	_mesh_instance.scale = Vector3(1.8, 2.2, 1.8)
+	print("[VERTEX] Settlement placed at %s  owner=%d" % [position, p_owner_index])
+
+
+## Upgrade this settlement to a city (taller, shinier).
+func upgrade_to_city(player_color: Color) -> void:
+	is_city = true
+	_mat.albedo_color = player_color
+	_mat.metallic = 0.6
+	_mesh_instance.scale = Vector3(2.4, 3.2, 2.4)
+	print("[VERTEX] Upgraded to city at %s  owner=%d" % [position, owner_index])

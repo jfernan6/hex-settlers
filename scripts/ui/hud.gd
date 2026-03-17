@@ -98,7 +98,7 @@ func refresh(player, phase_name: String, dice_roll: int) -> void:
 	_dice_label.text      = "Dice: %s" % (str(dice_roll) if dice_roll > 0 else "-")
 
 	_roll_btn.disabled = phase_name != "ROLL"
-	_end_btn.disabled  = phase_name != "BUILD"  # SETUP advances via settlement click
+	_end_btn.disabled  = (phase_name != "BUILD" and phase_name != "ROBBER")
 
 
 func set_message(msg: String) -> void:

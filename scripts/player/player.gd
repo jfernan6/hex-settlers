@@ -18,7 +18,8 @@ const SETTLEMENT_COST: Dictionary = {0: 1, 1: 1, 2: 1, 3: 1}
 var player_name: String
 var color: Color
 var resources: Dictionary       # int -> int
-var settlement_positions: Array # Array[Vector3], stored as plain Array for compat
+var settlement_positions: Array # Array[Vector3]
+var city_positions: Array       # Array[Vector3] — subset of settlement_positions
 var victory_points: int = 0
 var free_placements_left: int = 2
 
@@ -28,6 +29,7 @@ func _init(p_name: String, p_color: Color) -> void:
 	color = p_color
 	resources = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 	settlement_positions = []
+	city_positions = []
 
 
 # --- Resources ---

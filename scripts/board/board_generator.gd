@@ -68,16 +68,17 @@ func generate(parent: Node3D) -> Dictionary:
 			number = tokens[token_index]
 			token_index += 1
 
-		_spawn_tile(parent, q, r, terrain, number)
+		var area := _spawn_tile(parent, q, r, terrain, number)
 		terrain_tally[terrain] = terrain_tally.get(terrain, 0) + 1
 
-		# Store tile data for game logic (resource collection etc.)
+		# Store tile data for game logic (resource collection, robber, etc.)
 		tile_data["%d,%d" % [q, r]] = {
 			"terrain": terrain,
 			"number": number,
 			"center": HexGrid.axial_to_world(q, r),
 			"q": q,
 			"r": r,
+			"area": area,  # Area3D for robber click detection
 		}
 
 		var token_str := "(%d)" % number if number > 0 else "(desert)"
@@ -109,10 +110,16 @@ func _build_shuffled_terrains() -> Array:
 	return terrains
 
 
-func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> void:
-	var tile := MeshInstance3D.new()
+## Spawns one tile. Returns its Area3D so main.gd can connect robber signals.
+func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> Area3D:
+	# Container groups mesh + label + collision under one node
+	var container := Node3D.new()
+	container.name = "Tile_%d_%d" % [q, r]
+	container.position = HexGrid.axial_to_world(q, r)
+	parent.add_child(container)
 
-	# Hexagonal prism — 6-sided cylinder
+	# Hexagonal prism mesh
+	var tile := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = 1.0
 	mesh.bottom_radius = 1.0
@@ -120,13 +127,48 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> v
 	mesh.radial_segments = 6
 	mesh.rings = 1
 	tile.mesh = mesh
-
-	# Terrain colour
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = TERRAIN_COLORS[terrain]
 	mat.roughness = 0.9
 	tile.material_override = mat
+	container.add_child(tile)
 
-	tile.position = HexGrid.axial_to_world(q, r)
-	tile.name = "Tile_%d_%d" % [q, r]
-	parent.add_child(tile)
+	# Clickable area (used for robber placement when phase=ROBBER_MOVE)
+	var area := Area3D.new()
+	area.name = "TileArea"
+	area.input_ray_pickable = false  # enabled only during ROBBER_MOVE
+	var col := CollisionShape3D.new()
+	var cshape := CylinderShape3D.new()
+	cshape.radius = 0.95
+	cshape.height = 0.3
+	col.shape = cshape
+	area.add_child(col)
+	container.add_child(area)
+
+	# Number token label (skip desert)
+	if number > 0:
+		var num_label := Label3D.new()
+		num_label.text = str(number)
+		num_label.position = Vector3(0, 0.22, 0)
+		num_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		num_label.font_size = 128
+		num_label.pixel_size = 0.003
+		num_label.outline_size = 10
+		num_label.outline_modulate = Color(0.95, 0.92, 0.80)
+		num_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
+		container.add_child(num_label)
+
+		# Probability pips (•) below the number — more pips = better odds
+		var pips: int = 6 - abs(7 - number)
+		var pip_label := Label3D.new()
+		pip_label.text = "•".repeat(pips)
+		pip_label.position = Vector3(0, 0.13, 0)
+		pip_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		pip_label.font_size = 80
+		pip_label.pixel_size = 0.003
+		pip_label.outline_size = 6
+		pip_label.outline_modulate = Color(0.95, 0.92, 0.80)
+		pip_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
+		container.add_child(pip_label)
+
+	return area
