@@ -38,7 +38,10 @@ debug-screenshots/*.log
 .env
 .env.local
 
-# Large binary assets (download separately per CLAUDE.md instructions)
-# Uncomment if needed:
-# assets/models/*.glb
-# assets/models/*.fbx
+# Large binary assets — stored locally, NOT in git.
+# Download via scripts/download_assets.py using the project VM.
+# See CATAN_RULES.md for asset source documentation.
+assets/models/**/*.glb
+assets/models/**/*.fbx
+assets/models/**/*.png
+assets/models/kenney/
