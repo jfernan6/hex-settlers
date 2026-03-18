@@ -121,10 +121,14 @@ const SETTLEMENT_GLB := "res://assets/models/pieces/settlement.glb"
 const CITY_GLB        := "res://assets/models/pieces/city.glb"
 
 
-## Place a settlement — hides disc, shows Kenney house (or fallback box+roof).
+## Place a settlement — hides disc, shows building with pop-in tween.
 func occupy(player_color: Color, p_owner_index: int) -> void:
 	is_occupied  = true
 	owner_index  = p_owner_index
+	scale = Vector3.ZERO  # start invisible for pop-in
+	var tw := create_tween()
+	tw.tween_property(self, "scale", Vector3(1.15, 1.15, 1.15), 0.18)
+	tw.tween_property(self, "scale", Vector3.ONE, 0.10)
 	_disc.visible = false
 
 	# Try Kenney GLB model first

@@ -175,6 +175,8 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		num_label.outline_modulate = Color(0.95, 0.92, 0.80)
 		num_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
 		container.add_child(num_label)
+		# Register for floating animation
+		_anim_tokens.append({"node": num_label, "base_y": 0.22, "offset": randf() * TAU})
 
 		# Probability pips (•) below the number — more pips = better odds
 		var pips: int = 6 - abs(7 - number)
@@ -188,6 +190,27 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		pip_label.outline_modulate = Color(0.95, 0.92, 0.80)
 		pip_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
 		container.add_child(pip_label)
+
+	# Resource type overlay label — color-coded, always readable
+	const RES_LABELS := {
+		TerrainType.FOREST:    ["LUMBER", Color(0.30, 0.80, 0.25)],
+		TerrainType.HILLS:     ["BRICK",  Color(0.90, 0.38, 0.10)],
+		TerrainType.PASTURE:   ["WOOL",   Color(0.60, 0.92, 0.40)],
+		TerrainType.FIELDS:    ["GRAIN",  Color(1.00, 0.88, 0.10)],
+		TerrainType.MOUNTAINS: ["ORE",    Color(0.70, 0.70, 0.78)],
+		TerrainType.DESERT:    ["",       Color(0, 0, 0)],
+	}
+	if terrain in RES_LABELS and RES_LABELS[terrain][0] != "":
+		var res_lbl := Label3D.new()
+		res_lbl.text        = RES_LABELS[terrain][0]
+		res_lbl.position    = Vector3(0, 0.06, 0)
+		res_lbl.billboard   = BaseMaterial3D.BILLBOARD_ENABLED
+		res_lbl.font_size   = 52
+		res_lbl.pixel_size  = 0.003
+		res_lbl.outline_size = 5
+		res_lbl.outline_modulate = Color(0.05, 0.05, 0.05)
+		res_lbl.modulate    = RES_LABELS[terrain][1]
+		container.add_child(res_lbl)
 
 	return [area, tile]
 
@@ -207,8 +230,16 @@ const KENNEY_TILE_PATHS: Dictionary = {
 const KENNEY_SEA_PATH := "res://assets/models/tiles/sea.glb"
 
 
+## Animation refs — populated during generate(), fetched by main.gd for _process().
+var _anim_tokens:   Array = []   # {node:Label3D, base_y:float, offset:float}
+var _anim_canopies: Array = []   # {node:MeshInstance3D, offset:float}
+var _anim_sea:      Array = []   # MeshInstance3D foam rings
+
+func get_anim_refs() -> Dictionary:
+	return {"tokens": _anim_tokens, "canopies": _anim_canopies, "sea": _anim_sea}
+
+
 ## Adds procedural 3D terrain features on top of the PBR hex tile.
-## Uses Godot built-in meshes — no GLB import dependency, always renders correctly.
 func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 	match terrain:
 		TerrainType.FOREST:
@@ -216,13 +247,16 @@ func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 		TerrainType.MOUNTAINS:
 			_add_mountain_peak(container)
 		TerrainType.HILLS:
-			_add_hill_dome(container)
+			_add_brick_pile(container)
 		TerrainType.DESERT:
 			_add_desert_rock(container)
+		TerrainType.FIELDS:
+			_add_wheat(container)
+		TerrainType.PASTURE:
+			_add_sheep(container)
 
 
 func _add_trees(container: Node3D) -> void:
-	# 3 small cone trees at slightly offset positions
 	var positions := [Vector3(0, 0, 0), Vector3(0.32, 0, 0.22), Vector3(-0.28, 0, 0.18)]
 	var heights   := [0.55, 0.42, 0.48]
 	for i in positions.size():
@@ -243,6 +277,8 @@ func _add_trees(container: Node3D) -> void:
 		canopy.position = positions[i] + Vector3(0, 0.30 + heights[i] * 0.5, 0)
 		canopy.material_override = _solid_mat(Color(0.05, 0.28, 0.05), 0.92, 0)
 		container.add_child(canopy)
+		# Register for sway animation
+		_anim_canopies.append({"node": canopy, "offset": randf() * TAU})
 
 
 func _add_mountain_peak(container: Node3D) -> void:
@@ -267,15 +303,85 @@ func _add_mountain_peak(container: Node3D) -> void:
 		container.add_child(snow)
 
 
-func _add_hill_dome(container: Node3D) -> void:
-	var dome := MeshInstance3D.new()
-	var m := SphereMesh.new()
-	m.radius = 0.38; m.height = 0.42; m.radial_segments = 10; m.rings = 6
-	dome.mesh = m
-	dome.scale   = Vector3(1.0, 0.55, 1.0)
-	dome.position = Vector3(0, 0.14, 0)
-	dome.material_override = _solid_mat(Color(0.55, 0.22, 0.06), 0.88, 0.04)
-	container.add_child(dome)
+## Brick pile — stacked terracotta bricks in alternating rows
+func _add_brick_pile(container: Node3D) -> void:
+	var mat := _solid_mat(Color(0.72, 0.28, 0.12), 0.95, 0)
+	var rows := [
+		[Vector3(-0.18, 0, 0), Vector3(-0.06, 0, 0), Vector3(0.06, 0, 0), Vector3(0.18, 0, 0)],
+		[Vector3(-0.12, 0, 0), Vector3(0.0, 0, 0), Vector3(0.12, 0, 0)],
+		[Vector3(-0.06, 0, 0), Vector3(0.08, 0, 0)],
+	]
+	for row_i in rows.size():
+		for pos in rows[row_i]:
+			var brick := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(0.13, 0.07, 0.09)
+			brick.mesh = bm
+			brick.position = pos + Vector3(0, 0.16 + row_i * 0.078, 0.0)
+			brick.rotation_degrees = Vector3(0, randf_range(-8, 8), 0)
+			brick.material_override = mat
+			container.add_child(brick)
+
+
+## Wheat stalks with grain heads — Fields/Grain resource
+func _add_wheat(container: Node3D) -> void:
+	var positions := [
+		Vector3(0, 0, 0), Vector3(0.24, 0, 0.14), Vector3(-0.20, 0, 0.16),
+		Vector3(0.08, 0, -0.22), Vector3(-0.16, 0, -0.16)
+	]
+	for pos in positions:
+		var stalk := MeshInstance3D.new()
+		var sm := CylinderMesh.new()
+		sm.top_radius = 0.016; sm.bottom_radius = 0.022; sm.height = 0.36
+		stalk.mesh = sm
+		stalk.position = pos + Vector3(0, 0.31, 0)
+		stalk.material_override = _solid_mat(Color(0.85, 0.72, 0.10), 0.92, 0)
+		container.add_child(stalk)
+		_anim_canopies.append({"node": stalk, "offset": randf() * TAU})
+
+		var head := MeshInstance3D.new()
+		var hm := SphereMesh.new()
+		hm.radius = 0.05; hm.height = 0.14; hm.radial_segments = 6
+		head.mesh = hm
+		head.scale    = Vector3(1, 2.2, 1)
+		head.position = pos + Vector3(0, 0.52, 0)
+		head.material_override = _solid_mat(Color(0.92, 0.80, 0.05), 0.88, 0)
+		container.add_child(head)
+
+
+## Fluffy sheep — Pasture/Wool resource
+func _add_sheep(container: Node3D) -> void:
+	var white := _solid_mat(Color(0.96, 0.96, 0.96), 0.95, 0)
+	var dark  := _solid_mat(Color(0.14, 0.11, 0.09), 0.9, 0)
+
+	# Woolly body
+	var body := MeshInstance3D.new()
+	var bm := SphereMesh.new()
+	bm.radius = 0.22; bm.height = 0.32; bm.radial_segments = 10
+	body.mesh = bm
+	body.scale    = Vector3(1.15, 0.78, 1.35)
+	body.position = Vector3(0, 0.22, 0)
+	body.material_override = white
+	container.add_child(body)
+
+	# Head
+	var head := MeshInstance3D.new()
+	var hm := SphereMesh.new()
+	hm.radius = 0.10; hm.radial_segments = 8
+	head.mesh = hm
+	head.position = Vector3(0, 0.30, -0.24)
+	head.material_override = dark
+	container.add_child(head)
+
+	# 4 stubby legs
+	for lp in [Vector3(0.10, 0, 0.12), Vector3(-0.10, 0, 0.12), Vector3(0.08, 0, -0.12), Vector3(-0.08, 0, -0.12)]:
+		var leg := MeshInstance3D.new()
+		var lm := CylinderMesh.new()
+		lm.top_radius = 0.03; lm.bottom_radius = 0.03; lm.height = 0.14
+		leg.mesh = lm
+		leg.position = Vector3(0, 0.22, 0) + lp + Vector3(0, -0.18, 0)
+		leg.material_override = dark
+		container.add_child(leg)
 
 
 func _add_desert_rock(container: Node3D) -> void:
@@ -356,16 +462,20 @@ func _spawn_sea_frame(parent: Node3D) -> void:
 		tile.material_override = mat
 		container.add_child(tile)
 
-		# White foam ring on top of sea tile for visual interest
-		var foam := MeshInstance3D.new()
-		var fm := CylinderMesh.new()
-		fm.top_radius = 0.88; fm.bottom_radius = 0.92; fm.height = 0.04
-		fm.radial_segments = 10
-		foam.mesh = fm
-		foam.position = Vector3(0, 0.12, 0)
-		var foam_mat := StandardMaterial3D.new()
-		foam_mat.albedo_color = Color(0.90, 0.94, 1.0, 0.8)
-		foam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		foam_mat.roughness    = 0.3
-		foam.material_override = foam_mat
-		container.add_child(foam)
+		# Subtle ripple rings on sea tiles (thin, low emission, animated)
+		for ring_r in [0.55, 0.80]:
+			var ring := MeshInstance3D.new()
+			var rm := CylinderMesh.new()
+			rm.top_radius = ring_r; rm.bottom_radius = ring_r + 0.03
+			rm.height = 0.018; rm.radial_segments = 12
+			ring.mesh = rm
+			ring.position = Vector3(0, 0.112, 0)
+			var rm_mat := StandardMaterial3D.new()
+			rm_mat.albedo_color = Color(0.35, 0.60, 0.85)
+			rm_mat.roughness = 0.25; rm_mat.metallic = 0.45
+			rm_mat.emission_enabled = true
+			rm_mat.emission = Color(0.18, 0.38, 0.75)
+			rm_mat.emission_energy_multiplier = 0.35
+			ring.material_override = rm_mat
+			container.add_child(ring)
+			_anim_sea.append(ring)

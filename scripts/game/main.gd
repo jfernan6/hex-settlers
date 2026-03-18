@@ -40,6 +40,13 @@ var _ai_turn_actions: int = 0
 var _ai_timer: Timer     # fires after short delay to let frame render before AI acts
 const AI_DELAY := 0.5    # seconds between AI actions
 
+# Animation
+var _time: float = 0.0
+var _anim_tokens:   Array = []  # {node:Label3D, base_y:float, offset:float}
+var _anim_trees:    Array = []  # {node:MeshInstance3D, offset:float}
+var _anim_sea_foam: Array = []  # MeshInstance3D rings
+var _robber_base_y: float = 0.45
+
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -102,6 +109,43 @@ func _input(event: InputEvent) -> void:
 		get_tree().quit()
 
 
+## Animation loop — runs every frame to bring the board to life.
+func _process(delta: float) -> void:
+	if _state == null or _state.players.is_empty():
+		return
+	_time += delta
+
+	# Float number tokens up and down
+	for entry in _anim_tokens:
+		var lbl: Label3D = entry.node
+		if is_instance_valid(lbl):
+			lbl.position.y = entry.base_y + sin(_time * 1.4 + entry.offset) * 0.04
+
+	# Sway tree canopies and wheat stalks
+	for entry in _anim_trees:
+		var mesh: MeshInstance3D = entry.node
+		if is_instance_valid(mesh):
+			mesh.rotation_degrees.z = sin(_time * 0.9 + entry.offset) * 2.8
+
+	# Pulse sea ripple rings (subtle scale)
+	for foam in _anim_sea_foam:
+		if is_instance_valid(foam):
+			foam.scale.y = 1.0 + sin(_time * 1.4 + foam.position.x) * 0.08
+
+	# Pulse vertex slots during SETUP and BUILD (attract player attention)
+	var in_active_phase: bool = (_state.phase == GameState.Phase.SETUP or
+		_state.phase == GameState.Phase.BUILD)
+	var pulse: float = 1.0 + sin(_time * 3.5) * 0.15
+	for slot in _vertex_slots:
+		if not slot.is_occupied:
+			slot.scale = Vector3(pulse, 1.0, pulse) if in_active_phase else Vector3.ONE
+
+	# Robber hover + slow spin
+	if _robber != null and is_instance_valid(_robber):
+		_robber.rotation_degrees.y += delta * 22.0
+		_robber.position.y = _robber_base_y + sin(_time * 2.2) * 0.05
+
+
 func _toggle_fullscreen() -> void:
 	var mode := DisplayServer.window_get_mode()
 	if mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
@@ -121,10 +165,14 @@ func _setup_environment() -> void:
 	env.background_color = Color(0.10, 0.11, 0.15)  # dark table
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color  = Color(0.82, 0.86, 1.0)
-	env.ambient_light_energy = 0.22
+	env.ambient_light_energy = 0.28
+	# Subtle depth fog — adds atmosphere and makes sea tiles recede naturally
+	env.fog_enabled    = true
+	env.fog_light_color = Color(0.05, 0.07, 0.14)
+	env.fog_density    = 0.008
 	world_env.environment = env
 	add_child(world_env)
-	Log.info("[SETUP] Environment OK (dark table)")
+	Log.info("[SETUP] Environment OK (dark table + fog)")
 
 
 func _setup_lighting() -> void:
@@ -151,15 +199,24 @@ func _setup_lighting() -> void:
 	rim.shadow_enabled   = false
 	add_child(rim)
 
-	Log.info("[SETUP] Lighting OK (3-point)")
+	# 4th light — warm amber glow from below (board ambiance)
+	var board_glow := DirectionalLight3D.new()
+	board_glow.rotation_degrees = Vector3(60.0, 0.0, 0.0)
+	board_glow.light_energy = 0.18
+	board_glow.light_color  = Color(0.95, 0.78, 0.55)
+	board_glow.shadow_enabled = false
+	add_child(board_glow)
+
+	Log.info("[SETUP] Lighting OK (4-point)")
 
 
 func _setup_camera() -> void:
 	var camera := Camera3D.new()
-	camera.position = Vector3(0.0, 8.5, 7.5)
+	camera.position = Vector3(0.0, 7.8, 7.0)  # slightly lower for more dramatic angle
+	camera.fov = 62.0                           # wider FOV for cinematic feel
 	add_child(camera)
-	camera.look_at(Vector3(0.0, 0.0, 0.8), Vector3.UP)
-	print("[SETUP] Camera OK")
+	camera.look_at(Vector3(0.0, 0.0, 0.5), Vector3.UP)
+	Log.info("[SETUP] Camera OK (fov=62, pos=%s)" % camera.position)
 
 
 func _setup_game() -> void:
@@ -197,6 +254,13 @@ func _generate_board() -> void:
 	print("[BOARD] Generating board...")
 	var generator := BoardGenerator.new()
 	_state.tile_data = generator.generate(self)
+	# Collect animation refs from board generator
+	var refs: Dictionary = generator.get_anim_refs()
+	_anim_tokens   = refs.tokens
+	_anim_trees    = refs.canopies
+	_anim_sea_foam = refs.sea
+	Log.info("[BOARD] Anim refs: %d tokens, %d canopies, %d sea rings" % [
+		_anim_tokens.size(), _anim_trees.size(), _anim_sea_foam.size()])
 	_state.init_robber()
 	# Connect tile Area3D signals for robber (starts disabled)
 	for key in _state.tile_data:
@@ -235,75 +299,70 @@ func _create_edge_slots() -> void:
 
 
 func _create_robber() -> void:
-	# Hooded figure: cloak base (wide cone) + body + head
+	# Chess Knight / Dark Sorcerer — tall, distinctive, clearly reads as "the threat"
 	var root := Node3D.new()
 	root.name = "Robber"
+	var metal := Color(0.08, 0.06, 0.12)   # near-black with metallic sheen
 
-	var dark := Color(0.06, 0.04, 0.10)   # very dark purple-black
+	# Base — wide platform
+	var base := MeshInstance3D.new()
+	var base_m := CylinderMesh.new()
+	base_m.top_radius = 0.28; base_m.bottom_radius = 0.32
+	base_m.height = 0.08; base_m.radial_segments = 10
+	base.mesh = base_m
+	base.position = Vector3(0, 0.04, 0)
+	base.material_override = _robber_mat(metal, 0.4, 0.6)
+	root.add_child(base)
 
-	# Cloak — wide flat cone at bottom
-	var cloak := MeshInstance3D.new()
-	var cloak_m := CylinderMesh.new()
-	cloak_m.top_radius = 0.18; cloak_m.bottom_radius = 0.38
-	cloak_m.height = 0.42; cloak_m.radial_segments = 8
-	cloak.mesh = cloak_m
-	cloak.position = Vector3(0, 0.21, 0)
-	cloak.material_override = _robber_mat(dark, 0.85, 0.05)
-	root.add_child(cloak)
+	# Column — narrow body
+	var col := MeshInstance3D.new()
+	var col_m := CylinderMesh.new()
+	col_m.top_radius = 0.10; col_m.bottom_radius = 0.18
+	col_m.height = 0.55; col_m.radial_segments = 8
+	col.mesh = col_m
+	col.position = Vector3(0, 0.35, 0)
+	col.material_override = _robber_mat(metal, 0.35, 0.65)
+	root.add_child(col)
 
-	# Body — narrow cylinder
-	var body := MeshInstance3D.new()
-	var body_m := CylinderMesh.new()
-	body_m.top_radius = 0.12; body_m.bottom_radius = 0.16
-	body_m.height = 0.30; body_m.radial_segments = 8
-	body.mesh = body_m
-	body.position = Vector3(0, 0.55, 0)
-	body.material_override = _robber_mat(dark, 0.85, 0.05)
-	root.add_child(body)
+	# Skull sphere
+	var skull := MeshInstance3D.new()
+	var sk_m := SphereMesh.new()
+	sk_m.radius = 0.18; sk_m.height = 0.30; sk_m.radial_segments = 12
+	skull.mesh = sk_m
+	skull.position = Vector3(0, 0.76, 0)
+	skull.material_override = _robber_mat(metal, 0.3, 0.7)
+	root.add_child(skull)
 
-	# Hood — sphere head
-	var head := MeshInstance3D.new()
-	var head_m := SphereMesh.new()
-	head_m.radius = 0.14; head_m.height = 0.28
-	head.mesh = head_m
-	head.position = Vector3(0, 0.77, 0)
-	head.material_override = _robber_mat(dark, 0.8, 0.05)
-	root.add_child(head)
-
-	# Pointed hat — dark red/crimson cone on top
-	var hat := MeshInstance3D.new()
-	var hat_m := CylinderMesh.new()
-	hat_m.top_radius = 0.0; hat_m.bottom_radius = 0.14
-	hat_m.height = 0.28; hat_m.radial_segments = 8
-	hat.mesh = hat_m
-	hat.position = Vector3(0, 0.96, 0)
-	hat.material_override = _robber_mat(Color(0.55, 0.05, 0.05), 0.8, 0.1)
-	root.add_child(hat)
+	# Dark crown/horns — jagged top
+	for angle in [0, 90, 180, 270]:
+		var horn := MeshInstance3D.new()
+		var hm := CylinderMesh.new()
+		hm.top_radius = 0.0; hm.bottom_radius = 0.04; hm.height = 0.18
+		horn.mesh = hm
+		var rad := deg_to_rad(float(angle))
+		horn.position = Vector3(sin(rad) * 0.12, 0.96, cos(rad) * 0.12)
+		horn.material_override = _robber_mat(Color(0.45, 0.03, 0.03), 0.5, 0.3)
+		root.add_child(horn)
 
 	# Glowing red eyes
-	for eye_x in [-0.055, 0.055]:
+	for ex in [-0.07, 0.07]:
 		var eye := MeshInstance3D.new()
-		var eye_m := SphereMesh.new()
-		eye_m.radius = 0.03; eye_m.height = 0.06
-		eye.mesh = eye_m
-		eye.position = Vector3(eye_x, 0.77, -0.12)
-		var em := StandardMaterial3D.new()
-		em.albedo_color    = Color(1.0, 0.1, 0.1)
-		em.emission_enabled = true
-		em.emission        = Color(1.0, 0.1, 0.1)
-		em.emission_energy_multiplier = 3.0
-		eye.material_override = em
+		var em := SphereMesh.new()
+		em.radius = 0.04; em.height = 0.06
+		eye.mesh = em
+		eye.position = Vector3(ex, 0.76, -0.15)
+		var emat := StandardMaterial3D.new()
+		emat.albedo_color = Color(1.0, 0.05, 0.05)
+		emat.emission_enabled = true
+		emat.emission = Color(1.0, 0.05, 0.05)
+		emat.emission_energy_multiplier = 4.0
+		eye.material_override = emat
 		root.add_child(eye)
 
-	_robber = MeshInstance3D.new()  # proxy kept for glow system compatibility
-	_robber.name = "RobberProxy"
-	_robber.visible = false
-	root.add_child(_robber)
-
 	add_child(root)
-	_robber = root  # reassign so glow + position updates work on the root
+	_robber = root
 	_update_robber_position()
-	Log.info("[ROBBER] Hooded robber created at %s" % _state.robber_tile_key)
+	Log.info("[ROBBER] Chess-knight robber at %s" % _state.robber_tile_key)
 
 
 func _robber_mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
@@ -317,7 +376,7 @@ func _robber_mat(color: Color, roughness: float, metallic: float) -> StandardMat
 func _update_robber_position() -> void:
 	if _state.robber_tile_key in _state.tile_data:
 		var center: Vector3 = _state.tile_data[_state.robber_tile_key].center
-		_robber.position = Vector3(center.x, 0.45, center.z)
+		_robber.position = Vector3(center.x, _robber_base_y, center.z)
 
 
 # ---------------------------------------------------------------
