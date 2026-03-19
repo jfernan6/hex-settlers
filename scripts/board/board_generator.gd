@@ -140,14 +140,12 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	var tile := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = 1.0; mesh.bottom_radius = 1.0
-	mesh.height = 0.25; mesh.radial_segments = 6; mesh.rings = 1
+	mesh.height = 0.25; mesh.radial_segments = 24; mesh.rings = 4  # more verts for shader detail
 	tile.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = pbr.c; mat.roughness = pbr.r; mat.metallic = pbr.m
-	tile.material_override = mat
+	tile.material_override = _make_tile_material(terrain)
 	container.add_child(tile)
 
-	# Add Kenney 3D decoration on top of the tile for visual depth
+	# Kenney model on top of the shader surface
 	_add_terrain_decoration(container, terrain)
 
 	# Clickable area (used for robber placement when phase=ROBBER_MOVE)
@@ -162,33 +160,41 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	area.add_child(col)
 	container.add_child(area)
 
-	# Number token label (skip desert)
+	# Number token — sits flat on the tile surface, not floating.
+	# Flat CylinderMesh disc + billboard label above it.
 	if number > 0:
-		var num_label := Label3D.new()
-		num_label.text = str(number)
-		num_label.position = Vector3(0, 1.0, 0)   # above tallest decoration (~0.81)
-		num_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		num_label.font_size = 128
-		num_label.pixel_size = 0.003
-		num_label.outline_size = 10
-		num_label.outline_modulate = Color(0.95, 0.92, 0.80)
-		num_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
-		container.add_child(num_label)
-		# Register for floating animation
-		_anim_tokens.append({"node": num_label, "base_y": 1.0, "offset": randf() * TAU})
-
-		# Probability pips (•) below the number — more pips = better odds
 		var pips: int = 6 - abs(7 - number)
-		var pip_label := Label3D.new()
-		pip_label.text = "•".repeat(pips)
-		pip_label.position = Vector3(0, 0.84, 0)  # just below number token
-		pip_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		pip_label.font_size = 80
-		pip_label.pixel_size = 0.003
-		pip_label.outline_size = 6
-		pip_label.outline_modulate = Color(0.95, 0.92, 0.80)
-		pip_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
-		container.add_child(pip_label)
+		var is_hot: bool = number in [6, 8]
+		var token_color: Color = Color(0.85, 0.08, 0.08) if is_hot else Color(0.06, 0.06, 0.06)
+
+		# Flat cream disc sitting on the tile (smooth circle, 32 segments)
+		var disc := MeshInstance3D.new()
+		var dm   := CylinderMesh.new()
+		dm.top_radius = 0.34; dm.bottom_radius = 0.34
+		dm.height = 0.018; dm.radial_segments = 32
+		disc.mesh = dm
+		var dmat := StandardMaterial3D.new()
+		dmat.albedo_color = Color(0.94, 0.90, 0.74)
+		dmat.roughness    = 0.82
+		disc.material_override = dmat
+		disc.position = Vector3(0, 0.134, 0)   # just above tile top (tile top = 0.125)
+		container.add_child(disc)
+
+		# Combined number + pips label — one block = guaranteed shared centre axis
+		var tok_label := Label3D.new()
+		tok_label.text                = str(number) + "\n" + "•".repeat(pips)
+		tok_label.position            = Vector3(0, 0.20, 0)
+		tok_label.billboard            = BaseMaterial3D.BILLBOARD_ENABLED
+		tok_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tok_label.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+		tok_label.font_size            = 64
+		tok_label.pixel_size           = 0.003
+		tok_label.outline_size         = 9
+		tok_label.outline_modulate     = Color(0.93, 0.89, 0.72)
+		tok_label.modulate             = token_color
+		tok_label.render_priority      = 1
+		tok_label.no_depth_test        = true
+		container.add_child(tok_label)
 
 	# Resource type overlay label — color-coded, always readable
 	const RES_LABELS := {
@@ -202,7 +208,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	if terrain in RES_LABELS and RES_LABELS[terrain][0] != "":
 		var res_lbl := Label3D.new()
 		res_lbl.text        = RES_LABELS[terrain][0]
-		res_lbl.position    = Vector3(0, 0.70, 0)  # below pips, above decorations
+		res_lbl.position    = Vector3(0, 0.46, 0)  # below pips
 		res_lbl.billboard   = BaseMaterial3D.BILLBOARD_ENABLED
 		res_lbl.font_size   = 52
 		res_lbl.pixel_size  = 0.003
@@ -218,6 +224,30 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 # Sprint B: visual elements
 # ---------------------------------------------------------------
 
+## Shared circular token texture — generated once, reused by every tile.
+var _token_tex: ImageTexture = null
+
+func _get_token_tex() -> ImageTexture:
+	if _token_tex != null:
+		return _token_tex
+	var sz  := 128
+	var img := Image.create(sz, sz, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))   # fully transparent
+	var c := sz / 2.0
+	var r := c - 2.0
+	for y in range(sz):
+		for x in range(sz):
+			var d := Vector2(float(x) - c, float(y) - c).length()
+			if d <= r - 3.0:
+				# Interior — warm parchment, subtle centre highlight
+				var glow := 1.0 - (d / r) * 0.10
+				img.set_pixel(x, y, Color(0.95 * glow, 0.91 * glow, 0.74 * glow, 1.0))
+			elif d <= r:
+				# Dark border ring
+				img.set_pixel(x, y, Color(0.60, 0.50, 0.32, 1.0))
+	_token_tex = ImageTexture.create_from_image(img)
+	return _token_tex
+
 const KENNEY_TILE_PATHS: Dictionary = {
 	TerrainType.FOREST:    "res://assets/models/tiles/forest.glb",
 	TerrainType.HILLS:     "res://assets/models/tiles/hills.glb",
@@ -230,28 +260,51 @@ const KENNEY_SEA_PATH := "res://assets/models/tiles/sea.glb"
 
 
 ## Animation refs — populated during generate(), fetched by main.gd for _process().
-var _anim_tokens:   Array = []   # {node:Label3D, base_y:float, offset:float}
-var _anim_canopies: Array = []   # {node:MeshInstance3D, offset:float}
+var _anim_tokens: Array = []   # {node:Node3D, base_y:float, offset:float}
+var _anim_models: Array = []   # {node:Node3D, type:String, offset:float}
 
 func get_anim_refs() -> Dictionary:
-	return {"tokens": _anim_tokens, "canopies": _anim_canopies}
+	return {"tokens": _anim_tokens, "models": _anim_models}
 
 
-## Adds procedural 3D terrain features on top of the PBR hex tile.
+const _KEN := "res://assets/models/kenney/hexagon-kit/Models/GLB format/"
+
+## Places a Kenney model offset from centre so the token disc has room at (0,0).
+## anim_type: "sheep" | "tree" | "mill" | "" (static)
 func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 	match terrain:
 		TerrainType.FOREST:
-			_add_trees(container)
+			_place_model(container, _KEN + "unit-tree.glb",
+				Vector3(0.38, 0.13, 0.20), 0.55, randf_range(0, 360), "tree")
 		TerrainType.MOUNTAINS:
-			_add_mountain_peak(container)
+			_place_model(container, _KEN + "building-mine.glb",
+				Vector3(0.32, 0.13, -0.12), 0.42, randf_range(0, 360), "")
 		TerrainType.HILLS:
-			_add_brick_pile(container)
-		TerrainType.DESERT:
-			_add_desert_rock(container)
-		TerrainType.FIELDS:
-			_add_wheat(container)
+			_place_model(container, _KEN + "building-castle.glb",
+				Vector3(0.00, 0.13, 0.38), 0.32, randf_range(0, 360), "")
 		TerrainType.PASTURE:
-			_add_sheep(container)
+			_place_model(container, _KEN + "building-sheep.glb",
+				Vector3(0.38, 0.13, 0.12), 0.45, randf_range(0, 360), "sheep")
+		TerrainType.FIELDS:
+			_place_model(container, _KEN + "unit-mill.glb",
+				Vector3(-0.28, 0.13, 0.28), 0.50, randf_range(0, 360), "mill")
+		TerrainType.DESERT:
+			_place_model(container, _KEN + "sand-rocks.glb",
+				Vector3(0.32, 0.13, 0.20), 0.55, randf_range(0, 360), "")
+
+
+func _place_model(container: Node3D, path: String, pos: Vector3,
+		scale_f: float, rot_y: float, anim_type: String) -> void:
+	var scene = load(path)
+	if scene == null or not (scene is PackedScene):
+		return
+	var node: Node3D = scene.instantiate()
+	node.position           = pos
+	node.scale              = Vector3(scale_f, scale_f, scale_f)
+	node.rotation_degrees.y = rot_y
+	container.add_child(node)
+	if anim_type != "":
+		_anim_models.append({"node": node, "type": anim_type, "offset": randf() * TAU})
 
 
 func _add_trees(container: Node3D) -> void:
@@ -276,7 +329,7 @@ func _add_trees(container: Node3D) -> void:
 		canopy.material_override = _solid_mat(Color(0.05, 0.28, 0.05), 0.92, 0)
 		container.add_child(canopy)
 		# Register for sway animation
-		_anim_canopies.append({"node": canopy, "offset": randf() * TAU})
+		pass  # canopy sway removed (terrain shaders handle all animation)
 
 
 func _add_mountain_peak(container: Node3D) -> void:
@@ -335,7 +388,7 @@ func _add_wheat(container: Node3D) -> void:
 		stalk.position = pos + Vector3(0, 0.31, 0)
 		stalk.material_override = _solid_mat(Color(0.85, 0.72, 0.10), 0.92, 0)
 		container.add_child(stalk)
-		_anim_canopies.append({"node": stalk, "offset": randf() * TAU})
+		pass  # stalk sway removed (terrain shaders handle all animation)
 
 		var head := MeshInstance3D.new()
 		var hm := SphereMesh.new()
@@ -392,6 +445,307 @@ func _add_desert_rock(container: Node3D) -> void:
 	rock.rotation_degrees = Vector3(0, 20, 0)
 	rock.material_override = _solid_mat(Color(0.78, 0.60, 0.30), 0.9, 0)
 	container.add_child(rock)
+
+
+## Returns a live shader material for every terrain type.
+func _make_tile_material(terrain: int) -> Material:
+	match terrain:
+		TerrainType.MOUNTAINS: return _mountains_shader()
+		TerrainType.FIELDS:    return _fields_shader()
+		TerrainType.FOREST:    return _forest_shader()
+		TerrainType.HILLS:     return _hills_shader()
+		TerrainType.PASTURE:   return _pasture_shader()
+		TerrainType.DESERT:    return _desert_shader()
+		_:
+			var pbr: Dictionary = TERRAIN_PBR[terrain]
+			var mat := StandardMaterial3D.new()
+			mat.albedo_color = pbr.c; mat.roughness = pbr.r; mat.metallic = pbr.m
+			return mat
+
+
+## Mountains / Ore — rocky noise surface with pulsing blue ore veins.
+func _mountains_shader() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, specular_schlick_ggx;
+
+varying vec2 v_pos;
+
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+void vertex() { v_pos = VERTEX.xz; }
+
+void fragment() {
+	// Multi-scale rocky granite texture
+	float n = vn(v_pos * 4.5)       * 0.55
+	        + vn(v_pos * 9.0  + 2.3) * 0.30
+	        + vn(v_pos * 18.0 + 5.1) * 0.15;
+
+	vec3 rock = mix(vec3(0.24, 0.24, 0.28), vec3(0.56, 0.56, 0.61), n);
+
+	// Ore veins — slow drift + pulse glow
+	float vein_n = vn(v_pos * 6.5 + vec2(TIME * 0.08, TIME * 0.05)) * 0.6
+	             + vn(v_pos * 13.0 + 3.7) * 0.4;
+	float vein   = smoothstep(0.73, 0.77, vein_n);
+	float pulse  = 0.5 + 0.5 * sin(TIME * 2.0 + vein_n * 9.0);
+
+	vec3 ore = vec3(0.12, 0.25, 0.92);
+	vec3 col = mix(rock, ore * 0.7, vein * 0.7);
+
+	ALBEDO    = col;
+	ROUGHNESS = mix(0.82, 0.28, vein);
+	METALLIC  = mix(0.08, 0.55, vein);
+	EMISSION  = ore * vein * pulse * 1.4;
+	SPECULAR  = mix(0.30, 0.90, vein);
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
+
+
+## Fields / Grain — animated grain-wave ripple, same spirit as the ocean.
+func _fields_shader() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque;
+
+varying vec2 v_pos;
+
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+void vertex() { v_pos = VERTEX.xz; }
+
+void fragment() {
+	// Wind ripple traveling diagonally — like looking down at a field from above
+	float wave = sin(v_pos.x * 5.5 - v_pos.y * 2.0 + TIME * 1.4) * 0.5 + 0.5;
+	wave = wave * 0.7 + vn(v_pos * 5.0 + TIME * 0.15) * 0.3;
+
+	vec3 shadow = vec3(0.58, 0.44, 0.04);
+	vec3 light  = vec3(0.95, 0.83, 0.12);
+	vec3 col    = mix(shadow, light, wave);
+
+	ALBEDO    = col;
+	ROUGHNESS = 0.90;
+	METALLIC  = 0.0;
+	EMISSION  = light * wave * 0.07;  // warm golden shimmer at crest
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
+
+
+## Forest / Lumber — sunlight dappling through tree canopy onto the forest floor.
+func _forest_shader() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque;
+
+varying vec2 v_pos;
+
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+void vertex() { v_pos = VERTEX.xz; }
+
+void fragment() {
+	// Sunbeam patches drifting slowly — light filtering through canopy
+	vec2 drift = vec2(TIME * 0.09, TIME * 0.06);
+	float beam = vn(v_pos * 2.8 + drift) * 0.55
+	           + vn(v_pos * 5.5 + drift * 1.4 + 1.7) * 0.30
+	           + vn(v_pos * 11.0 + 3.3) * 0.15;
+
+	// Undergrowth texture underneath the light
+	float ground = vn(v_pos * 7.0 + 0.9) * 0.6 + vn(v_pos * 14.0 + 4.1) * 0.4;
+
+	vec3 deep   = vec3(0.03, 0.16, 0.03);  // dense shadow
+	vec3 mid    = vec3(0.07, 0.28, 0.05);  // undergrowth
+	vec3 bright = vec3(0.22, 0.58, 0.08);  // sunlit patch
+
+	vec3 col = mix(deep, mid, ground);
+	col = mix(col, bright, smoothstep(0.48, 0.78, beam));
+
+	ALBEDO    = col;
+	ROUGHNESS = 0.94;
+	EMISSION  = bright * smoothstep(0.62, 0.85, beam) * 0.08;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
+
+
+## Hills / Brick — terracotta clay with dried-earth crack lines.
+func _hills_shader() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque;
+
+varying vec2 v_pos;
+
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+void vertex() { v_pos = VERTEX.xz; }
+
+void fragment() {
+	// Base clay colour variation
+	float clay_n = vn(v_pos * 3.5) * 0.55 + vn(v_pos * 7.0 + 1.8) * 0.45;
+	vec3 dark_clay  = vec3(0.48, 0.14, 0.04);
+	vec3 light_clay = vec3(0.78, 0.30, 0.10);
+	vec3 col = mix(dark_clay, light_clay, clay_n);
+
+	// Dried-earth cracks — thin dark lines at noise boundaries
+	float crack_n = vn(v_pos * 4.8 + 2.2) * 0.6 + vn(v_pos * 9.5 + 5.0) * 0.4;
+	float crack   = 1.0 - smoothstep(0.0, 0.06, abs(crack_n - 0.5));
+	col = mix(col, vec3(0.20, 0.06, 0.01), crack * 0.65);
+
+	// Faint warm inner glow — like kiln-fired brick still holding heat
+	float glow = smoothstep(0.55, 0.85, clay_n);
+
+	ALBEDO    = col;
+	ROUGHNESS = 0.91;
+	METALLIC  = 0.02;
+	EMISSION  = vec3(0.55, 0.12, 0.01) * glow * 0.06;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
+
+
+## Pasture / Wool — multi-directional wind through wild meadow grass.
+func _pasture_shader() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque;
+
+varying vec2 v_pos;
+
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+void vertex() { v_pos = VERTEX.xz; }
+
+void fragment() {
+	// Two competing wind directions — creates irregular, natural grass motion
+	float w1 = sin(v_pos.x * 5.5 + v_pos.y * 2.0  + TIME * 1.9) * 0.5 + 0.5;
+	float w2 = sin(v_pos.x * 2.5 - v_pos.y * 5.0  - TIME * 1.3) * 0.5 + 0.5;
+	float w3 = vn(v_pos * 4.0 + vec2(TIME * 0.12, TIME * 0.08)) * 0.4 + 0.3;
+
+	float wave = w1 * 0.40 + w2 * 0.35 + w3 * 0.25;
+
+	vec3 shadow = vec3(0.10, 0.34, 0.05);
+	vec3 bright = vec3(0.42, 0.82, 0.14);
+	vec3 col    = mix(shadow, bright, wave);
+
+	ALBEDO    = col;
+	ROUGHNESS = 0.93;
+	EMISSION  = bright * smoothstep(0.65, 0.90, wave) * 0.06;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
+
+
+## Desert — concentric sand-dune ripples + heat-shimmer glow.
+func _desert_shader() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque;
+
+varying vec2 v_pos;
+
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+void vertex() { v_pos = VERTEX.xz; }
+
+void fragment() {
+	float r = length(v_pos);
+
+	// Concentric dune ripples scrolling outward from centre
+	float ripple = sin(r * 9.0 - TIME * 0.7) * 0.5 + 0.5;
+
+	// Cross-wind noise breaks perfect symmetry for a natural dune look
+	float noise  = vn(v_pos * 3.2 + vec2(TIME * 0.05, 0.0)) * 0.5
+	             + vn(v_pos * 6.5 + 1.9) * 0.3;
+
+	float dune = ripple * 0.65 + noise * 0.35;
+
+	vec3 trough = vec3(0.68, 0.52, 0.24);  // valley between dunes
+	vec3 crest  = vec3(0.97, 0.84, 0.52);  // wind-blown dune crest
+	vec3 col    = mix(trough, crest, dune);
+
+	// Heat shimmer — warm amber glow on dune crests
+	float heat = smoothstep(0.62, 0.90, dune);
+
+	ALBEDO    = col;
+	ROUGHNESS = 0.96;
+	EMISSION  = vec3(0.80, 0.45, 0.08) * heat * 0.10;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	return mat
 
 
 func _solid_mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:

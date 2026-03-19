@@ -42,8 +42,8 @@ const AI_DELAY := 0.5    # seconds between AI actions
 
 # Animation
 var _time: float = 0.0
-var _anim_tokens:  Array = []  # {node:Label3D, base_y:float, offset:float}
-var _anim_trees:   Array = []  # {node:MeshInstance3D, offset:float}
+var _anim_tokens:  Array = []  # {node:Node3D, base_y:float, offset:float}
+var _anim_models:  Array = []  # {node:Node3D, type:String, offset:float}
 var _robber_base_y: float = 0.45
 
 
@@ -114,17 +114,27 @@ func _process(delta: float) -> void:
 		return
 	_time += delta
 
-	# Float number tokens up and down
+	# Float number tokens up and down (disc + label + pip all share same offset)
 	for entry in _anim_tokens:
-		var lbl: Label3D = entry.node
-		if is_instance_valid(lbl):
-			lbl.position.y = entry.base_y + sin(_time * 1.4 + entry.offset) * 0.04
+		var node: Node3D = entry.node
+		if is_instance_valid(node):
+			node.position.y = entry.base_y + sin(_time * 1.4 + entry.offset) * 0.04
 
-	# Sway tree canopies and wheat stalks
-	for entry in _anim_trees:
-		var mesh: MeshInstance3D = entry.node
-		if is_instance_valid(mesh):
-			mesh.rotation_degrees.z = sin(_time * 0.9 + entry.offset) * 2.8
+	# Animate terrain models
+	for entry in _anim_models:
+		var mdl: Node3D = entry.node
+		if not is_instance_valid(mdl):
+			continue
+		match entry.type:
+			"sheep":
+				# Grazing — bob forward and back like eating grass
+				mdl.rotation_degrees.x = -10.0 + sin(_time * 1.5 + entry.offset) * 10.0
+			"tree":
+				# Gentle sway in the breeze
+				mdl.rotation_degrees.z = sin(_time * 0.85 + entry.offset) * 3.5
+			"mill":
+				# Windmill sails spinning — whole model Y rotation simulates turning
+				mdl.rotation_degrees.y = fmod(_time * 30.0 + rad_to_deg(entry.offset), 360.0)
 
 	# Pulse vertex slots during SETUP and BUILD (attract player attention)
 	var in_active_phase: bool = (_state.phase == GameState.Phase.SETUP or
@@ -182,7 +192,7 @@ func _setup_environment() -> void:
 	# Atmospheric fog — matches sky haze rather than dark-room fog
 	env.fog_enabled     = true
 	env.fog_light_color = Color(0.52, 0.64, 0.82)
-	env.fog_density     = 0.018   # thicker haze fades the ocean horizon naturally
+	env.fog_density     = 0.006   # light haze — horizon softened by shader edge-fade instead
 
 	world_env.environment = env
 	add_child(world_env)
@@ -271,9 +281,8 @@ func _generate_board() -> void:
 	# Collect animation refs from board generator (ocean self-animates via shader TIME)
 	var refs: Dictionary = generator.get_anim_refs()
 	_anim_tokens = refs.tokens
-	_anim_trees  = refs.canopies
-	Log.info("[BOARD] Anim refs: %d tokens, %d canopies" % [
-		_anim_tokens.size(), _anim_trees.size()])
+	_anim_models = refs.models
+	Log.info("[BOARD] Anim refs: %d tokens, %d models" % [_anim_tokens.size(), _anim_models.size()])
 	_state.init_robber()
 	# Connect tile Area3D signals for robber (starts disabled)
 	for key in _state.tile_data:
