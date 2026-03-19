@@ -63,7 +63,7 @@ const NUMBER_TOKENS: Array = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11,
 ## so game logic can look up which tiles a settlement is adjacent to.
 func generate(parent: Node3D) -> Dictionary:
 	_spawn_board_base(parent)
-	_spawn_sea_frame(parent)
+	_spawn_ocean_plane(parent)
 	var positions := HexGrid.get_board_positions()
 	var terrains := _build_shuffled_terrains()
 	var tokens := NUMBER_TOKENS.duplicate()
@@ -233,10 +233,9 @@ const KENNEY_SEA_PATH := "res://assets/models/tiles/sea.glb"
 ## Animation refs — populated during generate(), fetched by main.gd for _process().
 var _anim_tokens:   Array = []   # {node:Label3D, base_y:float, offset:float}
 var _anim_canopies: Array = []   # {node:MeshInstance3D, offset:float}
-var _anim_sea:      Array = []   # MeshInstance3D foam rings
 
 func get_anim_refs() -> Dictionary:
-	return {"tokens": _anim_tokens, "canopies": _anim_canopies, "sea": _anim_sea}
+	return {"tokens": _anim_tokens, "canopies": _anim_canopies}
 
 
 ## Adds procedural 3D terrain features on top of the PBR hex tile.
@@ -433,49 +432,85 @@ func _spawn_board_base(parent: Node3D) -> void:
 	parent.add_child(base)
 
 
-func _spawn_sea_frame(parent: Node3D) -> void:
-	# Ring 3 (18 tiles) forms the ocean border around the playfield
-	var sea_positions := HexGrid._get_ring_positions(3)
-	for pos in sea_positions:
-		var container := Node3D.new()
-		container.position = HexGrid.axial_to_world(pos.x, pos.y)
-		container.name = "Sea_%d_%d" % [pos.x, pos.y]
-		parent.add_child(container)
+func _spawn_ocean_plane(parent: Node3D) -> void:
+	# Large continuous ocean plane with GLSL wave shader — replaces 18 hex sea tiles.
+	# The shader self-animates via TIME; no _process() entry is needed.
+	var plane := MeshInstance3D.new()
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2(18.0, 18.0)
+	mesh.subdivide_width  = 40
+	mesh.subdivide_depth  = 40
+	plane.mesh = mesh
+	plane.position = Vector3(0.0, -0.12, 0.0)
+	plane.name = "OceanPlane"
 
-		var tile := MeshInstance3D.new()
-		var mesh := CylinderMesh.new()
-		mesh.top_radius    = 1.0
-		mesh.bottom_radius = 1.0
-		mesh.height        = 0.20
-		mesh.radial_segments = 6
-		mesh.rings = 1
-		tile.mesh = mesh
+	var shader := Shader.new()
+	shader.code = """shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_disabled, specular_schlick_ggx;
 
-		# Sea tile: deep blue base + white foam rim on top for visual depth
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = SEA_PBR.c
-		mat.roughness    = SEA_PBR.r
-		mat.metallic     = SEA_PBR.m
-		mat.emission_enabled = true
-		mat.emission = Color(0.02, 0.12, 0.28)
-		mat.emission_energy_multiplier = 0.35
-		tile.material_override = mat
-		container.add_child(tile)
+uniform vec4  color_deep    : source_color = vec4(0.01, 0.10, 0.30, 1.0);
+uniform vec4  color_shallow : source_color = vec4(0.04, 0.32, 0.62, 1.0);
+uniform vec4  color_foam    : source_color = vec4(0.85, 0.93, 1.00, 1.0);
+uniform float wave_height = 0.10;
+uniform float wave_scale  = 1.8;
 
-		# Subtle ripple rings on sea tiles (thin, low emission, animated)
-		for ring_r in [0.55, 0.80]:
-			var ring := MeshInstance3D.new()
-			var rm := CylinderMesh.new()
-			rm.top_radius = ring_r; rm.bottom_radius = ring_r + 0.03
-			rm.height = 0.018; rm.radial_segments = 12
-			ring.mesh = rm
-			ring.position = Vector3(0, 0.112, 0)
-			var rm_mat := StandardMaterial3D.new()
-			rm_mat.albedo_color = Color(0.35, 0.60, 0.85)
-			rm_mat.roughness = 0.25; rm_mat.metallic = 0.45
-			rm_mat.emission_enabled = true
-			rm_mat.emission = Color(0.18, 0.38, 0.75)
-			rm_mat.emission_energy_multiplier = 0.35
-			ring.material_override = rm_mat
-			container.add_child(ring)
-			_anim_sea.append(ring)
+float gerstner(vec2 pos, vec2 dir, float freq, float amp, float speed, float t) {
+	return amp * sin(dot(dir, pos) * freq + t * speed);
+}
+
+void vertex() {
+	vec2 p = VERTEX.xz;
+	float t = TIME;
+	float h = 0.0;
+	h += gerstner(p, normalize(vec2(1.0,  0.5)), 0.9 * wave_scale, wave_height,        1.1, t);
+	h += gerstner(p, normalize(vec2(-0.6, 1.0)), 1.3 * wave_scale, wave_height * 0.55, 0.9, t);
+	h += gerstner(p, normalize(vec2(0.4, -0.9)), 2.1 * wave_scale, wave_height * 0.28, 1.4, t);
+	h += gerstner(p, normalize(vec2(-1.0, 0.2)), 3.2 * wave_scale, wave_height * 0.12, 1.7, t);
+	VERTEX.y += h;
+	NORMAL = normalize(vec3(-h, 1.0, -h));
+}
+
+void fragment() {
+	vec2  uv      = UV;
+	float dist    = length(uv - vec2(0.5)) * 2.0;
+	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.5);
+
+	vec3 col = mix(color_shallow.rgb, color_deep.rgb, smoothstep(0.2, 0.8, dist));
+
+	float foam_amt = smoothstep(0.6, 1.0,
+		sin(uv.x * 12.0 + TIME * 0.7) * sin(uv.y * 10.0 - TIME * 0.5) + 0.5);
+	col = mix(col, color_foam.rgb, foam_amt * 0.35);
+
+	col = mix(col, color_shallow.rgb * 1.4, fresnel * 0.4);
+
+	ALBEDO    = col;
+	ROUGHNESS = mix(0.02, 0.12, 1.0 - fresnel);
+	METALLIC  = 0.65;
+	SPECULAR  = 0.95;
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	plane.material_override = mat
+	parent.add_child(plane)
+
+	# Shore foam ring — emissive torus at the board base edge (shoreline marker)
+	var foam_ring := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 5.55
+	tm.outer_radius = 6.05
+	tm.rings = 64
+	tm.ring_segments = 8
+	foam_ring.mesh = tm
+	foam_ring.position = Vector3(0.0, -0.10, 0.0)
+	foam_ring.scale = Vector3(1.0, 0.12, 1.0)   # flatten into a disc-ring shape
+	foam_ring.name = "ShoreFoam"
+	var foam_mat := StandardMaterial3D.new()
+	foam_mat.albedo_color = Color(0.88, 0.94, 1.0)
+	foam_mat.roughness = 0.3
+	foam_mat.metallic = 0.05
+	foam_mat.emission_enabled = true
+	foam_mat.emission = Color(0.65, 0.80, 1.0)
+	foam_mat.emission_energy_multiplier = 0.6
+	foam_ring.material_override = foam_mat
+	parent.add_child(foam_ring)

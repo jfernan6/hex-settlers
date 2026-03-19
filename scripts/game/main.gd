@@ -42,9 +42,8 @@ const AI_DELAY := 0.5    # seconds between AI actions
 
 # Animation
 var _time: float = 0.0
-var _anim_tokens:   Array = []  # {node:Label3D, base_y:float, offset:float}
-var _anim_trees:    Array = []  # {node:MeshInstance3D, offset:float}
-var _anim_sea_foam: Array = []  # MeshInstance3D rings
+var _anim_tokens:  Array = []  # {node:Label3D, base_y:float, offset:float}
+var _anim_trees:   Array = []  # {node:MeshInstance3D, offset:float}
 var _robber_base_y: float = 0.45
 
 
@@ -126,11 +125,6 @@ func _process(delta: float) -> void:
 		var mesh: MeshInstance3D = entry.node
 		if is_instance_valid(mesh):
 			mesh.rotation_degrees.z = sin(_time * 0.9 + entry.offset) * 2.8
-
-	# Pulse sea ripple rings (subtle scale)
-	for foam in _anim_sea_foam:
-		if is_instance_valid(foam):
-			foam.scale.y = 1.0 + sin(_time * 1.4 + foam.position.x) * 0.08
 
 	# Pulse vertex slots during SETUP and BUILD (attract player attention)
 	var in_active_phase: bool = (_state.phase == GameState.Phase.SETUP or
@@ -254,13 +248,12 @@ func _generate_board() -> void:
 	print("[BOARD] Generating board...")
 	var generator := BoardGenerator.new()
 	_state.tile_data = generator.generate(self)
-	# Collect animation refs from board generator
+	# Collect animation refs from board generator (ocean self-animates via shader TIME)
 	var refs: Dictionary = generator.get_anim_refs()
-	_anim_tokens   = refs.tokens
-	_anim_trees    = refs.canopies
-	_anim_sea_foam = refs.sea
-	Log.info("[BOARD] Anim refs: %d tokens, %d canopies, %d sea rings" % [
-		_anim_tokens.size(), _anim_trees.size(), _anim_sea_foam.size()])
+	_anim_tokens = refs.tokens
+	_anim_trees  = refs.canopies
+	Log.info("[BOARD] Anim refs: %d tokens, %d canopies" % [
+		_anim_tokens.size(), _anim_trees.size()])
 	_state.init_robber()
 	# Connect tile Area3D signals for robber (starts disabled)
 	for key in _state.tile_data:
