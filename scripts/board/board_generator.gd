@@ -283,14 +283,11 @@ func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 			_place_model(container, _KEN + "building-castle.glb",
 				Vector3(0.00, 0.13, 0.38), 0.32, randf_range(0, 360), "")
 		TerrainType.PASTURE:
-			_place_model(container, _KEN + "building-sheep.glb",
-				Vector3(0.38, 0.13, 0.12), 0.45, randf_range(0, 360), "sheep")
+			pass   # shader handles visual — sheep to be revisited later
 		TerrainType.FIELDS:
-			_place_model(container, _KEN + "unit-mill.glb",
-				Vector3(-0.28, 0.13, 0.28), 0.50, randf_range(0, 360), "mill")
+			_add_windmill(container)
 		TerrainType.DESERT:
-			_place_model(container, _KEN + "sand-rocks.glb",
-				Vector3(0.32, 0.13, 0.20), 0.55, randf_range(0, 360), "")
+			_add_desert_scene(container)
 
 
 func _place_model(container: Node3D, path: String, pos: Vector3,
@@ -305,6 +302,203 @@ func _place_model(container: Node3D, path: String, pos: Vector3,
 	container.add_child(node)
 	if anim_type != "":
 		_anim_models.append({"node": node, "type": anim_type, "offset": randf() * TAU})
+
+
+## FIELDS — animated windmill with spinning sail cross
+func _add_windmill(container: Node3D) -> void:
+	var stone  := _solid_mat(Color(0.72, 0.70, 0.65), 0.90, 0.05)
+	var wood   := _solid_mat(Color(0.45, 0.35, 0.22), 0.88, 0.0)
+	var canvas := _solid_mat(Color(0.88, 0.84, 0.70), 0.85, 0.0)
+
+	# Root — offset so token disc at centre stays clear
+	var root := Node3D.new()
+	root.position = Vector3(0.52, 0.125, 0.08)
+	root.rotation_degrees.y = randf_range(-15.0, 15.0)
+	container.add_child(root)
+
+	# Tapered stone tower (8-sided for faceted look)
+	var tower := MeshInstance3D.new()
+	var tm := CylinderMesh.new()
+	tm.top_radius = 0.09; tm.bottom_radius = 0.14
+	tm.height = 0.48; tm.radial_segments = 8
+	tower.mesh = tm
+	tower.position = Vector3(0, 0.24, 0)
+	tower.material_override = stone
+	root.add_child(tower)
+
+	# Wooden conical cap
+	var cap := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.0; cm.bottom_radius = 0.16
+	cm.height = 0.15; cm.radial_segments = 8
+	cap.mesh = cm
+	cap.position = Vector3(0, 0.555, 0)
+	cap.material_override = wood
+	root.add_child(cap)
+
+	# Small door at base
+	var door := MeshInstance3D.new()
+	var dm := BoxMesh.new()
+	dm.size = Vector3(0.08, 0.11, 0.02)
+	door.mesh = dm
+	door.position = Vector3(0, 0.055, 0.14)   # front face toward camera (+Z)
+	door.material_override = _solid_mat(Color(0.28, 0.18, 0.10), 0.95, 0)
+	root.add_child(door)
+
+	# Sail hub — offset in +Z so sails face the camera, not the back wall
+	var hub := Node3D.new()
+	hub.position = Vector3(0, 0.44, 0.16)   # sticks out toward camera (+Z direction)
+	root.add_child(hub)
+	_anim_models.append({"node": hub, "type": "windmill_sail", "offset": randf() * TAU})
+
+	# 4 blade arms in + pattern (top / right / bottom / left)
+	# Blades spread in X and Y — from the camera they appear as a spinning cross
+	var b_offsets  := [Vector3(0, 0.12, 0), Vector3(0.12, 0, 0), Vector3(0, -0.12, 0), Vector3(-0.12, 0, 0)]
+	var b_rotations := [0.0, 90.0, 0.0, 90.0]
+	for i in 4:
+		var blade := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.048, 0.24, 0.016)
+		blade.mesh = bm
+		blade.position = b_offsets[i]
+		blade.rotation_degrees.z = b_rotations[i]
+		blade.material_override = canvas
+		hub.add_child(blade)
+
+
+## PASTURE — two procedural sheep, one grazing, one idling
+## Only the head animates for grazing — body stays stable so it never looks broken.
+func _add_sheep_herd(container: Node3D) -> void:
+	var off1 := randf() * TAU
+
+	# Sheep 1 — grazing: head tilts down/up independently
+	var s1 := Node3D.new()
+	s1.position = Vector3(0.50, 0.125, 0.16)
+	s1.rotation_degrees.y = 40.0
+	container.add_child(s1)
+	var s1_head := _build_sheep(s1)
+	_anim_models.append({"node": s1_head, "type": "sheep_head_graze", "offset": off1})
+	_anim_models.append({"node": s1,      "type": "sheep_idle",        "offset": off1})
+
+	# Sheep 2 — just idle body sway
+	var s2 := Node3D.new()
+	s2.position = Vector3(-0.48, 0.125, 0.22)
+	s2.rotation_degrees.y = -75.0
+	container.add_child(s2)
+	_build_sheep(s2)
+	_anim_models.append({"node": s2, "type": "sheep_idle", "offset": randf() * TAU})
+
+
+## Clean minimal sheep: white oval body + black sphere head + dark legs.
+## No neck, no rotations, no scaling on head — just spheres and cylinders.
+func _build_sheep(parent: Node3D) -> Node3D:
+	var wool  := _solid_mat(Color(0.96, 0.95, 0.93), 0.92, 0.0)
+	var black := _solid_mat(Color(0.10, 0.08, 0.08), 0.90, 0.0)
+
+	# Large white body
+	var body := MeshInstance3D.new()
+	var bm   := SphereMesh.new()
+	bm.radius = 0.20; bm.radial_segments = 12
+	body.mesh = bm
+	body.scale    = Vector3(1.0, 0.85, 1.25)
+	body.position = Vector3(0, 0.22, 0)
+	body.material_override = wool
+	parent.add_child(body)
+
+	# Small black round head — pure sphere, no rotation, placed at front of body
+	# body extends to z = -0.20*1.25 = -0.25 from centre; head sits right there
+	var head_root := Node3D.new()
+	head_root.position = Vector3(0, 0.26, -0.30)   # far enough that skull never clips into body
+	parent.add_child(head_root)
+
+	var skull := MeshInstance3D.new()
+	var sm    := SphereMesh.new()
+	sm.radius = 0.048; sm.radial_segments = 10      # smaller, proportional to body
+	skull.mesh = sm
+	skull.position = Vector3(0, 0, -0.08)           # arc point for grazing animation
+	skull.material_override = black
+	head_root.add_child(skull)
+
+	# 4 dark legs
+	for lp: Vector3 in [Vector3( 0.10, 0,  0.13), Vector3(-0.10, 0,  0.13),
+	                     Vector3( 0.08, 0, -0.12), Vector3(-0.08, 0, -0.12)]:
+		var leg := MeshInstance3D.new()
+		var lm  := CylinderMesh.new()
+		lm.top_radius = 0.030; lm.bottom_radius = 0.026; lm.height = 0.18
+		leg.mesh = lm
+		leg.position = Vector3(lp.x, 0.09, lp.z)
+		leg.material_override = black
+		parent.add_child(leg)
+
+	return head_root
+
+
+## DESERT — flat-topped sandstone mesa + animated cactus
+func _add_desert_scene(container: Node3D) -> void:
+	var sandstone := _solid_mat(Color(0.78, 0.62, 0.36), 0.95, 0.0)
+	var cactus_c  := _solid_mat(Color(0.20, 0.48, 0.15), 0.90, 0.0)
+
+	# --- Mesa ---
+	var mesa := MeshInstance3D.new()
+	var mm := CylinderMesh.new()
+	mm.top_radius = 0.20; mm.bottom_radius = 0.24
+	mm.height = 0.15; mm.radial_segments = 12
+	mesa.mesh = mm
+	mesa.position = Vector3(-0.05, 0.20, 0.54)
+	mesa.material_override = sandstone
+	container.add_child(mesa)
+
+	# Rock strata band (slightly darker ring at mid-height)
+	var band := MeshInstance3D.new()
+	var bm2 := CylinderMesh.new()
+	bm2.top_radius = 0.206; bm2.bottom_radius = 0.226
+	bm2.height = 0.025; bm2.radial_segments = 12
+	band.mesh = bm2
+	band.position = Vector3(-0.05, 0.185, 0.54)
+	band.material_override = _solid_mat(Color(0.60, 0.46, 0.26), 0.95, 0)
+	container.add_child(band)
+
+	# --- Cactus ---
+	var cac := Node3D.new()
+	cac.position = Vector3(0.50, 0.125, 0.22)
+	cac.rotation_degrees.y = randf_range(0, 360)
+	container.add_child(cac)
+
+	# Trunk
+	var trunk := MeshInstance3D.new()
+	var trm := CylinderMesh.new()
+	trm.top_radius = 0.055; trm.bottom_radius = 0.065
+	trm.height = 0.28; trm.radial_segments = 8
+	trunk.mesh = trm
+	trunk.position = Vector3(0, 0.14, 0)
+	trunk.material_override = cactus_c
+	cac.add_child(trunk)
+
+	# Two arms (left and right)
+	for side: float in [-1.0, 1.0]:
+		# Horizontal segment
+		var h := MeshInstance3D.new()
+		var hm := CylinderMesh.new()
+		hm.top_radius = 0.038; hm.bottom_radius = 0.042
+		hm.height = 0.14; hm.radial_segments = 7
+		h.mesh = hm
+		h.rotation_degrees.z = 90.0
+		h.position = Vector3(side * (0.065 + 0.07), 0.17, 0)
+		h.material_override = cactus_c
+		cac.add_child(h)
+
+		# Vertical segment (arm tip pointing up)
+		var v := MeshInstance3D.new()
+		var vm := CylinderMesh.new()
+		vm.top_radius = 0.038; vm.bottom_radius = 0.042
+		vm.height = 0.10; vm.radial_segments = 7
+		v.mesh = vm
+		v.position = Vector3(side * (0.065 + 0.14), 0.22, 0)
+		v.material_override = cactus_c
+		cac.add_child(v)
+
+	# Register cactus for slow sway animation
+	_anim_models.append({"node": cac, "type": "cactus_sway", "offset": randf() * TAU})
 
 
 func _add_trees(container: Node3D) -> void:

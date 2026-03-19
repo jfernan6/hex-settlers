@@ -126,15 +126,24 @@ func _process(delta: float) -> void:
 		if not is_instance_valid(mdl):
 			continue
 		match entry.type:
-			"sheep":
-				# Grazing — bob forward and back like eating grass
-				mdl.rotation_degrees.x = -10.0 + sin(_time * 1.5 + entry.offset) * 10.0
+			"sheep_head_graze":
+				# Nods head down to graze then back up
+				mdl.rotation_degrees.x = -25.0 + sin(_time * 1.1 + entry.offset) * 20.0
+			"sheep_idle", "sheep":
+				# Whole-body very gentle sway (breathing feel)
+				mdl.rotation_degrees.z = sin(_time * 0.45 + entry.offset) * 1.8
 			"tree":
 				# Gentle sway in the breeze
 				mdl.rotation_degrees.z = sin(_time * 0.85 + entry.offset) * 3.5
 			"mill":
-				# Windmill sails spinning — whole model Y rotation simulates turning
+				# Legacy Kenney mill — whole model Y spin
 				mdl.rotation_degrees.y = fmod(_time * 30.0 + rad_to_deg(entry.offset), 360.0)
+			"windmill_sail":
+				# Sail cross spins on Z axis
+				mdl.rotation_degrees.z = fmod(_time * 55.0 + rad_to_deg(entry.offset), 360.0)
+			"cactus_sway":
+				# Very slow desert wind sway
+				mdl.rotation_degrees.z = sin(_time * 0.30 + entry.offset) * 1.8
 
 	# Pulse vertex slots during SETUP and BUILD (attract player attention)
 	var in_active_phase: bool = (_state.phase == GameState.Phase.SETUP or
