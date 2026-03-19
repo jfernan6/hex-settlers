@@ -167,7 +167,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	if number > 0:
 		var num_label := Label3D.new()
 		num_label.text = str(number)
-		num_label.position = Vector3(0, 0.22, 0)
+		num_label.position = Vector3(0, 1.0, 0)   # above tallest decoration (~0.81)
 		num_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		num_label.font_size = 128
 		num_label.pixel_size = 0.003
@@ -176,13 +176,13 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		num_label.modulate = Color(0.85, 0.08, 0.08) if number in [6, 8] else Color(0.06, 0.06, 0.06)
 		container.add_child(num_label)
 		# Register for floating animation
-		_anim_tokens.append({"node": num_label, "base_y": 0.22, "offset": randf() * TAU})
+		_anim_tokens.append({"node": num_label, "base_y": 1.0, "offset": randf() * TAU})
 
 		# Probability pips (•) below the number — more pips = better odds
 		var pips: int = 6 - abs(7 - number)
 		var pip_label := Label3D.new()
 		pip_label.text = "•".repeat(pips)
-		pip_label.position = Vector3(0, 0.13, 0)
+		pip_label.position = Vector3(0, 0.84, 0)  # just below number token
 		pip_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		pip_label.font_size = 80
 		pip_label.pixel_size = 0.003
@@ -203,7 +203,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	if terrain in RES_LABELS and RES_LABELS[terrain][0] != "":
 		var res_lbl := Label3D.new()
 		res_lbl.text        = RES_LABELS[terrain][0]
-		res_lbl.position    = Vector3(0, 0.06, 0)
+		res_lbl.position    = Vector3(0, 0.70, 0)  # below pips, above decorations
 		res_lbl.billboard   = BaseMaterial3D.BILLBOARD_ENABLED
 		res_lbl.font_size   = 52
 		res_lbl.pixel_size  = 0.003
