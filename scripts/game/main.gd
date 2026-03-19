@@ -155,18 +155,38 @@ func _toggle_fullscreen() -> void:
 func _setup_environment() -> void:
 	var world_env := WorldEnvironment.new()
 	var env := Environment.new()
-	env.background_mode  = Environment.BG_COLOR
-	env.background_color = Color(0.10, 0.11, 0.15)  # dark table
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color  = Color(0.82, 0.86, 1.0)
-	env.ambient_light_energy = 0.28
-	# Subtle depth fog — adds atmosphere and makes sea tiles recede naturally
-	env.fog_enabled    = true
-	env.fog_light_color = Color(0.05, 0.07, 0.14)
-	env.fog_density    = 0.008
+
+	# Procedural sky — the key DirectionalLight3D becomes the visible sun disc
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color        = Color(0.15, 0.35, 0.72)  # deep blue zenith
+	sky_mat.sky_horizon_color    = Color(0.60, 0.76, 0.92)  # pale horizon haze
+	sky_mat.sky_curve            = 0.12
+	sky_mat.sky_energy_multiplier = 1.0
+	sky_mat.ground_bottom_color  = Color(0.08, 0.06, 0.05)  # dark earth below horizon
+	sky_mat.ground_horizon_color = Color(0.38, 0.42, 0.46)
+	sky_mat.ground_curve         = 0.02
+	sky_mat.sun_angle_max        = 35.0   # how wide the sun glow spreads
+	sky_mat.sun_curve            = 0.12   # lower = sharper/smaller sun disc
+
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+
+	# Let sky colour drive ambient — objects pick up natural blue-sky fill
+	env.ambient_light_source          = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_sky_contribution = 0.6
+	env.ambient_light_energy          = 0.55
+
+	# Atmospheric fog — matches sky haze rather than dark-room fog
+	env.fog_enabled     = true
+	env.fog_light_color = Color(0.52, 0.64, 0.82)
+	env.fog_density     = 0.018   # thicker haze fades the ocean horizon naturally
+
 	world_env.environment = env
 	add_child(world_env)
-	Log.info("[SETUP] Environment OK (dark table + fog)")
+	Log.info("[SETUP] Environment OK (procedural sky + sun)")
 
 
 func _setup_lighting() -> void:

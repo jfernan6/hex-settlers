@@ -62,8 +62,7 @@ const NUMBER_TOKENS: Array = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11,
 ## Returns a Dictionary mapping "q,r" -> {terrain, number, center, q, r}
 ## so game logic can look up which tiles a settlement is adjacent to.
 func generate(parent: Node3D) -> Dictionary:
-	_spawn_board_base(parent)
-	_spawn_ocean_plane(parent)
+	_spawn_ocean_plane(parent)   # single unified surface: sand island + ocean
 	var positions := HexGrid.get_board_positions()
 	var terrains := _build_shuffled_terrains()
 	var tokens := NUMBER_TOKENS.duplicate()
@@ -414,103 +413,127 @@ func _try_load_kenney_tile(terrain: int) -> Node3D:
 	return scene.instantiate()
 
 
-func _spawn_board_base(parent: Node3D) -> void:
-	var base := MeshInstance3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius    = 5.8
-	mesh.bottom_radius = 5.8
-	mesh.height        = 0.10
-	mesh.radial_segments = 24
-	mesh.rings = 1
-	base.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.14, 0.09, 0.05)  # dark walnut wood
-	mat.roughness    = 0.88
-	mat.metallic     = 0.05
-	base.position = Vector3(0, -0.18, 0)
-	base.name = "BoardBase"
-	parent.add_child(base)
-
-
 func _spawn_ocean_plane(parent: Node3D) -> void:
-	# Large continuous ocean plane with GLSL wave shader — replaces 18 hex sea tiles.
-	# The shader self-animates via TIME; no _process() entry is needed.
+	# One unified surface covers the whole scene: sandy island in the centre,
+	# animated ocean at the edges.  Using a single PlaneMesh eliminates the
+	# clipping that occurs when two separate meshes share the same Y range.
+	# The shader transitions sand→wet-sand→shallow-water→deep-ocean purely
+	# by distance from the board centre (world-space XZ radius).
+	#
+	# Zone radii (world units):
+	#   r < 4.3   dry sand  (sits beneath the hex tile gaps — opaque tiles occlude it)
+	#   4.3..5.4  wet sand / beach border
+	#   5.4..6.4  shallow water / shoreline with foam
+	#   r > 6.4   open ocean with Gerstner waves
 	var plane := MeshInstance3D.new()
 	var mesh := PlaneMesh.new()
-	mesh.size = Vector2(18.0, 18.0)
-	mesh.subdivide_width  = 40
-	mesh.subdivide_depth  = 40
+	mesh.size = Vector2(54.0, 54.0)   # large enough that edges never appear on screen
+	mesh.subdivide_width  = 120       # vertex spacing ~0.45 — smooth waves
+	mesh.subdivide_depth  = 120
 	plane.mesh = mesh
-	plane.position = Vector3(0.0, -0.12, 0.0)
-	plane.name = "OceanPlane"
+	# y = -0.10: sits just below hex tile bottoms (y = -0.125) so tiles appear
+	# flush/embedded in sand; opaque tile cylinders occlude the plane beneath them.
+	plane.position = Vector3(0.0, -0.10, 0.0)
+	plane.name = "TerrainPlane"
 
 	var shader := Shader.new()
 	shader.code = """shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_disabled, specular_schlick_ggx;
 
-uniform vec4  color_deep    : source_color = vec4(0.01, 0.10, 0.30, 1.0);
-uniform vec4  color_shallow : source_color = vec4(0.04, 0.32, 0.62, 1.0);
-uniform vec4  color_foam    : source_color = vec4(0.85, 0.93, 1.00, 1.0);
-uniform float wave_height = 0.10;
-uniform float wave_scale  = 1.8;
+uniform vec4  u_sand_dry  : source_color = vec4(0.84, 0.72, 0.48, 1.0);
+uniform vec4  u_sand_wet  : source_color = vec4(0.60, 0.50, 0.33, 1.0);
+uniform vec4  u_shallow   : source_color = vec4(0.10, 0.46, 0.72, 1.0);
+uniform vec4  u_deep      : source_color = vec4(0.01, 0.10, 0.30, 1.0);
+uniform vec4  u_foam      : source_color = vec4(0.88, 0.95, 1.00, 1.0);
+uniform float u_dry_end    = 4.3;
+uniform float u_shore_end  = 5.4;
+uniform float u_ocean_full = 6.8;
+uniform float u_wave_h     = 0.14;
+uniform float u_wave_scale = 1.6;
 
-float gerstner(vec2 pos, vec2 dir, float freq, float amp, float speed, float t) {
-	return amp * sin(dot(dir, pos) * freq + t * speed);
+varying vec2  v_xz;
+varying float v_ocean;
+
+// Value noise — organic patches, no repeating grid
+float h21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p.yx + 19.19);
+	return fract(p.x * p.y);
+}
+float vn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+	           mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
 }
 
 void vertex() {
-	vec2 p = VERTEX.xz;
-	float t = TIME;
-	float h = 0.0;
-	h += gerstner(p, normalize(vec2(1.0,  0.5)), 0.9 * wave_scale, wave_height,        1.1, t);
-	h += gerstner(p, normalize(vec2(-0.6, 1.0)), 1.3 * wave_scale, wave_height * 0.55, 0.9, t);
-	h += gerstner(p, normalize(vec2(0.4, -0.9)), 2.1 * wave_scale, wave_height * 0.28, 1.4, t);
-	h += gerstner(p, normalize(vec2(-1.0, 0.2)), 3.2 * wave_scale, wave_height * 0.12, 1.7, t);
-	VERTEX.y += h;
-	NORMAL = normalize(vec3(-h, 1.0, -h));
+	v_xz   = VERTEX.xz;
+	float r = length(v_xz);
+	v_ocean = smoothstep(u_shore_end - 0.5, u_ocean_full, r);
+
+	// Gerstner waves with ANALYTICAL normals (cos gradient, not -h approximation).
+	// This gives smooth, physically correct specular highlights on the water.
+	float h = 0.0, nx = 0.0, nz = 0.0;
+
+	vec2 d1 = normalize(vec2( 1.0,  0.5)); float q1 = 0.9*u_wave_scale, a1 = u_wave_h;
+	float p1 = dot(d1,v_xz)*q1 + TIME*1.1;
+	h += a1*sin(p1); nx += a1*cos(p1)*q1*d1.x; nz += a1*cos(p1)*q1*d1.y;
+
+	vec2 d2 = normalize(vec2(-0.6,  1.0)); float q2 = 1.3*u_wave_scale, a2 = u_wave_h*0.55;
+	float p2 = dot(d2,v_xz)*q2 + TIME*0.9;
+	h += a2*sin(p2); nx += a2*cos(p2)*q2*d2.x; nz += a2*cos(p2)*q2*d2.y;
+
+	vec2 d3 = normalize(vec2( 0.4, -0.9)); float q3 = 2.1*u_wave_scale, a3 = u_wave_h*0.28;
+	float p3 = dot(d3,v_xz)*q3 + TIME*1.4;
+	h += a3*sin(p3); nx += a3*cos(p3)*q3*d3.x; nz += a3*cos(p3)*q3*d3.y;
+
+	vec2 d4 = normalize(vec2(-1.0,  0.2)); float q4 = 3.2*u_wave_scale, a4 = u_wave_h*0.12;
+	float p4 = dot(d4,v_xz)*q4 + TIME*1.7;
+	h += a4*sin(p4); nx += a4*cos(p4)*q4*d4.x; nz += a4*cos(p4)*q4*d4.y;
+
+	VERTEX.y += h * v_ocean;
+	NORMAL    = normalize(vec3(-nx*v_ocean, 1.0, -nz*v_ocean));
 }
 
 void fragment() {
-	vec2  uv      = UV;
-	float dist    = length(uv - vec2(0.5)) * 2.0;
+	float r = length(v_xz);
+
+	float wet_t  = smoothstep(u_dry_end, u_shore_end, r);
+	vec3  sand   = mix(u_sand_dry.rgb, u_sand_wet.rgb, wet_t);
+
+	float deep_t = smoothstep(u_shore_end, u_ocean_full + 2.0, r);
+	vec3  water  = mix(u_shallow.rgb, u_deep.rgb, deep_t);
+
 	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 3.5);
+	water = mix(water, u_shallow.rgb * 1.3, fresnel * 0.30 * v_ocean);
 
-	vec3 col = mix(color_shallow.rgb, color_deep.rgb, smoothstep(0.2, 0.8, dist));
+	// Large-scale value noise foam — only highlights the top ~20% of wave crests
+	vec2  fc = v_xz * 0.55 + vec2(TIME * 0.045, TIME * 0.028);
+	float fn = vn(fc) * 0.55 + vn(fc * 1.8 + 4.1) * 0.30 + vn(fc * 3.1 + 8.3) * 0.15;
+	float foam_t = smoothstep(0.72, 0.92, fn) * v_ocean;
+	water = mix(water, u_foam.rgb, foam_t * 0.22);
 
-	float foam_amt = smoothstep(0.6, 1.0,
-		sin(uv.x * 12.0 + TIME * 0.7) * sin(uv.y * 10.0 - TIME * 0.5) + 0.5);
-	col = mix(col, color_foam.rgb, foam_amt * 0.35);
+	// Soft shoreline fringe — subtle, not blinding white
+	float shore_r = (u_shore_end + u_ocean_full) * 0.5;
+	float shore_f = smoothstep(1.0, 0.0, abs(r - shore_r) / 0.9) * v_ocean;
+	water = mix(water, u_foam.rgb, shore_f * 0.22);
 
-	col = mix(col, color_shallow.rgb * 1.4, fresnel * 0.4);
+	float water_t = smoothstep(u_shore_end - 0.4, u_shore_end + 0.6, r);
+	vec3  col     = mix(sand, water, water_t);
+
+	// Fade to deep ocean colour at the plane horizon — hides the carpet edge
+	float edge_fade = smoothstep(18.0, 26.0, r);
+	col = mix(col, u_deep.rgb * 0.6, edge_fade);
 
 	ALBEDO    = col;
-	ROUGHNESS = mix(0.02, 0.12, 1.0 - fresnel);
-	METALLIC  = 0.65;
-	SPECULAR  = 0.95;
+	EMISSION  = sand * (1.0 - water_t) * 0.10;
+	ROUGHNESS = mix(0.97, mix(0.03, 0.15, 1.0 - fresnel), water_t);
+	METALLIC  = mix(0.0,  0.60, water_t);
+	SPECULAR  = mix(0.05, 0.95, water_t);
 }
 """
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	plane.material_override = mat
 	parent.add_child(plane)
-
-	# Shore foam ring — emissive torus at the board base edge (shoreline marker)
-	var foam_ring := MeshInstance3D.new()
-	var tm := TorusMesh.new()
-	tm.inner_radius = 5.55
-	tm.outer_radius = 6.05
-	tm.rings = 64
-	tm.ring_segments = 8
-	foam_ring.mesh = tm
-	foam_ring.position = Vector3(0.0, -0.10, 0.0)
-	foam_ring.scale = Vector3(1.0, 0.12, 1.0)   # flatten into a disc-ring shape
-	foam_ring.name = "ShoreFoam"
-	var foam_mat := StandardMaterial3D.new()
-	foam_mat.albedo_color = Color(0.88, 0.94, 1.0)
-	foam_mat.roughness = 0.3
-	foam_mat.metallic = 0.05
-	foam_mat.emission_enabled = true
-	foam_mat.emission = Color(0.65, 0.80, 1.0)
-	foam_mat.emission_energy_multiplier = 0.6
-	foam_ring.material_override = foam_mat
-	parent.add_child(foam_ring)
