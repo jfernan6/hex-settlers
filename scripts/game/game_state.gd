@@ -115,7 +115,8 @@ func setup_settlement_placed(pos: Vector3) -> void:
 	Log.info("[SETUP] %s placed settlement (round %d) → now place a road" % [
 		player.player_name, setup_round])
 	GameEvents.record(GameEvents.EventType.SETTLEMENT_PLACED, player.player_name,
-		{"setup_round": setup_round, "pos_x": pos.x, "pos_z": pos.z})
+		{"setup_round": setup_round, "vp": player.victory_points,
+		 "pos_x": pos.x, "pos_z": pos.z})
 	setup_sub_phase_changed.emit()
 	_check_win()
 
@@ -621,6 +622,8 @@ func _check_largest_army() -> void:
 				players[i].victory_points += 2
 				print("[GAME] %s takes Largest Army (%d knights) — VP:%d" % [
 					players[i].player_name, knights, players[i].victory_points])
+				GameEvents.record(GameEvents.EventType.LARGEST_ARMY, players[i].player_name,
+					{"knights": knights, "vp": players[i].victory_points})
 				changed = true
 				_check_win()
 	if changed:

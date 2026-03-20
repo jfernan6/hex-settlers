@@ -325,6 +325,18 @@ func run_full_game() -> void:
 		print("[FULLGAME] WINNER: %s with %d VP!" % [w.player_name, w.victory_points])
 	else:
 		print("[FULLGAME] No winner — timeout or draw")
+
+	# --- Event log: validate + dump to disk ---
+	var issues: Array = GameEvents.validate()
+	print("[EVENTS] %d total events recorded." % GameEvents.entries.size())
+	if issues.is_empty():
+		print("[EVENTS] ✓ Validation passed — no rule violations detected.")
+	else:
+		print("[EVENTS] ✗ %d VIOLATION(S) FOUND:" % issues.size())
+		for issue in issues:
+			print("[EVENTS]   ✗ " + issue)
+	GameEvents.flush_to_file("fullgame")
+
 	await _shot("fg_final_state")
 	print("[FULLGAME] ============================================================")
 	get_tree().quit()
