@@ -34,12 +34,12 @@ func init(main_node: Node3D, game_state: RefCounted) -> void:
 ## Create a timestamped session directory and store it in _session_dir.
 ## All screenshots and logs for this run will be co-located there.
 func _init_session(mode: String) -> void:
-	var dt := Time.get_datetime_dict_from_system()
-	var ts  := "%04d%02d%02d_%02d%02d%02d" % [
-		dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
-	_session_dir = Log.SESSION_DIR + "%s_%s/" % [mode, ts]
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_session_dir))
-	print("[SESSION] %s" % _session_dir)
+	# Both latest dirs are overwritten every run — no accumulation.
+	Log.clear_dir(Log.LATEST_RUN_DIR)
+	Log.clear_dir(Log.LATEST_SESSION_DIR)
+	_session_dir = Log.LATEST_SESSION_DIR
+	print("[SESSION] logs  → %s" % Log.LATEST_SESSION_DIR)
+	print("[SESSION] shots → %s" % Log.LATEST_RUN_DIR)
 
 
 func run_debug_play() -> void:
@@ -349,7 +349,7 @@ func run_full_game() -> void:
 		print("[EVENTS] ✗ %d VIOLATION(S) FOUND:" % issues.size())
 		for issue in issues:
 			print("[EVENTS]   ✗ " + issue)
-	GameEvents.flush_to_file("fullgame", _session_dir)
+	GameEvents.flush_to_file("fullgame")
 
 	await _shot("fg_final_state")
 	print("[FULLGAME] ============================================================")
@@ -548,16 +548,10 @@ func _print_all_state() -> void:
 func _shot(label: String) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var img  := get_viewport().get_texture().get_image()
+	var img   := get_viewport().get_texture().get_image()
 	var fname := "dbg_%02d_%s.png" % [_seq, label]
-	# Screenshots go into the session's screenshots/ subfolder when in a session,
-	# otherwise fall back to the flat manual screenshots dir.
-	var ss_dir: String
-	if _session_dir != "":
-		ss_dir = _session_dir + "screenshots/"
-		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(ss_dir))
-	else:
-		ss_dir = Log.SCREENSHOT_DIR
-	img.save_png(ss_dir + fname)
-	print("[DBGPLAY] Screenshot → %s%s" % [ss_dir, fname])
+	# Always write to latest_run/ — overwritten each run, no storage accumulation.
+	# Session folders only contain event logs (small text files).
+	img.save_png(Log.LATEST_RUN_DIR + fname)
+	print("[DBGPLAY] Screenshot → latest_run/%s" % fname)
 	_seq += 1

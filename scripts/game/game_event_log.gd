@@ -191,22 +191,10 @@ func get_player_stats() -> Dictionary:
 # File output — call after a game ends to persist the full log
 # ---------------------------------------------------------------
 
-## Write events.json + events.txt into a session directory.
-##
-## session_dir: if provided (by debug_controller, which already created the dir),
-##   write directly into it. If empty, create a new timestamped session dir.
-## Returns the session dir path used (so callers can co-locate screenshots).
-func flush_to_file(label: String = "", session_dir: String = "") -> String:
-	var sess: String
-	if session_dir != "":
-		sess = session_dir
-	else:
-		var dt := Time.get_datetime_dict_from_system()
-		var ts  := "%04d%02d%02d_%02d%02d%02d" % [
-			dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
-		var pfx := (label + "_") if label != "" else ""
-		sess = Log.SESSION_DIR + pfx + ts + "/"
-		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(sess))
+## Write events.json + events.txt into debug/sessions/latest/, overwriting the
+## previous run. Acts as a local buffer — maps directly to a DB upload later.
+func flush_to_file(label: String = "", _session_dir: String = "") -> String:
+	var sess := Log.LATEST_SESSION_DIR
 
 	# --- JSON (machine-readable) ---
 	var json_obj := {
@@ -226,48 +214,7 @@ func flush_to_file(label: String = "", session_dir: String = "") -> String:
 		f_txt.close()
 
 	print("[EVENTS] Log saved → %sevents.json + events.txt" % sess)
-
-	# Prune oldest sessions if cap exceeded
-	_prune_old_sessions()
-
 	return sess
-
-
-## Delete oldest session directories beyond max_keep.
-## Timestamp-named folders sort chronologically, so oldest = first after sort.
-func _prune_old_sessions(max_keep: int = 20) -> void:
-	var base_abs := ProjectSettings.globalize_path(Log.SESSION_DIR)
-	var d := DirAccess.open(base_abs)
-	if d == null:
-		return
-	var folders: Array = []
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if d.current_is_dir() and not name.begins_with("."):
-			folders.append(name)
-		name = d.get_next()
-	d.list_dir_end()
-	folders.sort()   # timestamp names sort chronologically; oldest first
-	while folders.size() > max_keep:
-		_delete_dir_recursive(base_abs + "/" + folders.pop_front())
-
-
-func _delete_dir_recursive(abs_path: String) -> void:
-	var d := DirAccess.open(abs_path)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if not name.begins_with("."):
-			if d.current_is_dir():
-				_delete_dir_recursive(abs_path + "/" + name)
-			else:
-				d.remove(name)
-		name = d.get_next()
-	d.list_dir_end()
-	DirAccess.remove_absolute(abs_path)
 
 
 func _build_text_log() -> String:

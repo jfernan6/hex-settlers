@@ -10,10 +10,12 @@ extends Node
 
 enum Level { DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3 }
 
-## F12 manual screenshots (not tied to any specific game run)
-const SCREENSHOT_DIR := "res://debug/screenshots/"
-## Automated test sessions (one subfolder per --debug-fullgame / --debug-play run)
-const SESSION_DIR    := "res://debug/sessions/"
+## F12 manual screenshots (player-initiated, kept indefinitely)
+const SCREENSHOT_DIR   := "res://debug/screenshots/"
+## Overwritten every automated run — always shows the latest run's screenshots
+const LATEST_RUN_DIR   := "res://debug/screenshots/latest_run/"
+## Overwritten every automated run — maps to what a DB upload will replace later
+const LATEST_SESSION_DIR := "res://debug/sessions/latest/"
 
 var current_level: int = Level.INFO
 const BUFFER_SIZE := 500
@@ -23,9 +25,24 @@ var _buffer: Array = []
 
 func _ready() -> void:
 	# Ensure all debug output directories exist on every launch.
-	# Safe to call even if the dirs already exist.
-	for d: String in [SCREENSHOT_DIR, SESSION_DIR]:
+	for d: String in [SCREENSHOT_DIR, LATEST_RUN_DIR, LATEST_SESSION_DIR]:
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(d))
+
+
+## Wipe a flat directory (files only, no subdirs) before writing new content.
+## Used for both latest_run/ and sessions/latest/ at the start of each run.
+func clear_dir(res_path: String) -> void:
+	var abs := ProjectSettings.globalize_path(res_path)
+	var d   := DirAccess.open(abs)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var name := d.get_next()
+	while name != "":
+		if not name.begins_with("."):
+			d.remove(name)
+		name = d.get_next()
+	d.list_dir_end()
 
 
 func debug(msg: String) -> void:
