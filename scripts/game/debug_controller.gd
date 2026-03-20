@@ -16,9 +16,10 @@ const PHASE_BUILD       := 2
 const PHASE_ROBBER_MOVE := 3
 const PHASE_GAME_OVER   := 4
 
-var _main   # Node3D (main scene)
-var _state  # GameState RefCounted
+var _main        # Node3D (main scene)
+var _state       # GameState RefCounted
 var _seq: int = 0
+var _session_dir: String = ""   # set by _init_session(); all output goes here
 
 
 func init(main_node: Node3D, game_state: RefCounted) -> void:
@@ -30,7 +31,19 @@ func init(main_node: Node3D, game_state: RefCounted) -> void:
 # Main scripted play sequence
 # ---------------------------------------------------------------
 
+## Create a timestamped session directory and store it in _session_dir.
+## All screenshots and logs for this run will be co-located there.
+func _init_session(mode: String) -> void:
+	var dt := Time.get_datetime_dict_from_system()
+	var ts  := "%04d%02d%02d_%02d%02d%02d" % [
+		dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
+	_session_dir = Log.SESSION_DIR + "%s_%s/" % [mode, ts]
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_session_dir))
+	print("[SESSION] %s" % _session_dir)
+
+
 func run_debug_play() -> void:
+	_init_session("play")
 	# Stop the AI timer — debug controller drives all actions manually
 	_main._ai_timer.stop()
 	print("[DBGPLAY] ============================================================")
@@ -215,6 +228,7 @@ func run_debug_play() -> void:
 # ---------------------------------------------------------------
 
 func run_full_game() -> void:
+	_init_session("fullgame")
 	# Stop the AI timer — debug controller drives all turns
 	_main._ai_timer.stop()
 	const TIMEOUT_SECS := 300.0  # 5 minute safety cutoff
@@ -335,7 +349,7 @@ func run_full_game() -> void:
 		print("[EVENTS] ✗ %d VIOLATION(S) FOUND:" % issues.size())
 		for issue in issues:
 			print("[EVENTS]   ✗ " + issue)
-	GameEvents.flush_to_file("fullgame")
+	GameEvents.flush_to_file("fullgame", _session_dir)
 
 	await _shot("fg_final_state")
 	print("[FULLGAME] ============================================================")
@@ -534,9 +548,16 @@ func _print_all_state() -> void:
 func _shot(label: String) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var img := get_viewport().get_texture().get_image()
+	var img  := get_viewport().get_texture().get_image()
 	var fname := "dbg_%02d_%s.png" % [_seq, label]
-	img.save_png("res://debug-screenshots/" + fname)
-	img.save_png("res://debug-screenshots/latest_run.png")
-	print("[DBGPLAY] Screenshot: %s" % fname)
+	# Screenshots go into the session's screenshots/ subfolder when in a session,
+	# otherwise fall back to the flat manual screenshots dir.
+	var ss_dir: String
+	if _session_dir != "":
+		ss_dir = _session_dir + "screenshots/"
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(ss_dir))
+	else:
+		ss_dir = Log.SCREENSHOT_DIR
+	img.save_png(ss_dir + fname)
+	print("[DBGPLAY] Screenshot → %s%s" % [ss_dir, fname])
 	_seq += 1

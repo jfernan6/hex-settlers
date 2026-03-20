@@ -1000,8 +1000,11 @@ func _god_instant_win() -> void:
 # ---------------------------------------------------------------
 
 func _take_screenshot() -> void:
-	var timestamp := Time.get_datetime_string_from_system().replace(":", "-").replace(" ", "_")
+	var dt  := Time.get_datetime_dict_from_system()
+	var ts  := "%04d%02d%02d_%02d%02d%02d" % [
+		dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
 	var img := get_viewport().get_texture().get_image()
-	img.save_png("res://debug-screenshots/run_%s.png" % timestamp)
-	img.save_png("res://debug-screenshots/latest_run.png")
-	print("[SCREENSHOT] run_%s.png  +  latest_run.png" % timestamp)
+	# Manual F12 shots and startup test shots go to the flat screenshots dir.
+	img.save_png(Log.SCREENSHOT_DIR + "manual_%s.png" % ts)
+	img.save_png(Log.SCREENSHOT_DIR + "latest.png")   # always-current for quick inspection
+	print("[SCREENSHOT] debug/screenshots/manual_%s.png  +  latest.png" % ts)

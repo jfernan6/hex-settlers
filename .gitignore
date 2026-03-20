@@ -27,9 +27,13 @@ desktop.ini
 *.swo
 *~
 
-# Debug screenshots and logs (auto-generated, don't commit)
-debug-screenshots/*.png
-debug-screenshots/*.log
+# Debug output — auto-generated, never commit.
+# dirs themselves are tracked via .gitkeep; their contents are ignored.
+debug/screenshots/*
+!debug/screenshots/.gitkeep
+debug/sessions/*
+!debug/sessions/.gitkeep
+debug-screenshots/
 
 # Logs
 *.log

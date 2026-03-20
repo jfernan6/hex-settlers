@@ -4,13 +4,28 @@ extends Node
 ## Usage: Log.info("msg")  Log.debug("verbose")  Log.warn("problem")  Log.error("critical")
 ##
 ## Set Log.current_level = Log.Level.WARN to silence info/debug output in production.
+##
+## Path constants — single source of truth for all debug output directories.
+## debug_controller and game_event_log reference these instead of hardcoding paths.
 
 enum Level { DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3 }
+
+## F12 manual screenshots (not tied to any specific game run)
+const SCREENSHOT_DIR := "res://debug/screenshots/"
+## Automated test sessions (one subfolder per --debug-fullgame / --debug-play run)
+const SESSION_DIR    := "res://debug/sessions/"
 
 var current_level: int = Level.INFO
 const BUFFER_SIZE := 500
 
 var _buffer: Array = []
+
+
+func _ready() -> void:
+	# Ensure all debug output directories exist on every launch.
+	# Safe to call even if the dirs already exist.
+	for d: String in [SCREENSHOT_DIR, SESSION_DIR]:
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(d))
 
 
 func debug(msg: String) -> void:
