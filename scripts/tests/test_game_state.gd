@@ -24,6 +24,13 @@ func run() -> void:
 	_test_longest_road_transfer()
 	_test_largest_army_transfer()
 	_test_resource_collection()
+	_test_port_generic_rate()
+	_test_port_specific_rate()
+	_test_port_no_rate_without_settlement()
+	_test_dev_card_timing_max_one_per_turn()
+	_test_dev_card_timing_cannot_play_bought_same_turn()
+	_test_player_trade_executes()
+	_test_player_trade_rejects_when_insufficient()
 
 
 # ---------------------------------------------------------------
@@ -298,11 +305,11 @@ func _test_largest_army() -> void:
 	p.dev_cards = [0, 0, 0]  # 3 knights (Type.KNIGHT = 0)
 	state.robber_tile_key = "0,-1"
 
-	# Play 2 knights — no bonus yet
+	# Play 2 knights — no bonus yet (each on a simulated separate turn)
 	state.play_knight(p, 0)
-	state.phase = GameState.Phase.BUILD
+	state.phase = GameState.Phase.BUILD; state.dev_cards_played_this_turn = 0
 	state.play_knight(p, 0)
-	state.phase = GameState.Phase.BUILD
+	state.phase = GameState.Phase.BUILD; state.dev_cards_played_this_turn = 0
 	_runner.assert_eq(state.largest_army_holder, -1, "2 knights: no Largest Army bonus")
 
 	# Play 3rd knight → bonus awarded
@@ -332,3 +339,119 @@ func _test_resource_collection() -> void:
 	state._collect_resources(5)
 	_runner.assert_eq(p.resources[PlayerData.RES_LUMBER], before + 1,
 		"Roll 5 on Forest(6) tile gives no Lumber")
+
+
+# ---------------------------------------------------------------
+# Sprint 2A — Port / harbour trade rate tests
+# ---------------------------------------------------------------
+
+## Player with settlement at a generic (3:1) harbour vertex gets rate=3.
+func _test_port_generic_rate() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	# First harbour in HARBORS: type=-1 (generic), v1x=-5.145, v1z=3.819
+	var harbor: Dictionary = HexGrid.HARBORS[0]
+	p.settlement_positions.append(Vector3(harbor["v1x"], 0.15, harbor["v1z"]))
+	p.resources[PlayerData.RES_LUMBER] = 3   # can now trade 3 Lumber
+	var rate: int = state._get_trade_rate(p, PlayerData.RES_LUMBER)
+	_runner.assert_eq(rate, 3, "Generic harbour gives 3:1 rate")
+
+
+## Player with settlement at a specific (2:1 Grain) harbour vertex gets rate=2 for Grain.
+func _test_port_specific_rate() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	# Harbour index 2: type=3 (Grain=RES_GRAIN), v1x=3.675, v1z=3.819
+	var harbor: Dictionary = HexGrid.HARBORS[2]
+	p.settlement_positions.append(Vector3(harbor["v1x"], 0.15, harbor["v1z"]))
+	var grain_rate: int = state._get_trade_rate(p, PlayerData.RES_GRAIN)
+	_runner.assert_eq(grain_rate, 2, "Specific Grain harbour gives 2:1 for Grain")
+	# Other resources still at 4:1 (no generic port)
+	var lumber_rate: int = state._get_trade_rate(p, PlayerData.RES_LUMBER)
+	_runner.assert_eq(lumber_rate, 4, "Specific Grain harbour still 4:1 for Lumber")
+
+
+## Player without any harbour settlement gets default 4:1 rate.
+func _test_port_no_rate_without_settlement() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	p.settlement_positions.append(Vector3(0, 0.15, 0))   # board centre — no harbour
+	var rate: int = state._get_trade_rate(p, PlayerData.RES_ORE)
+	_runner.assert_eq(rate, 4, "No harbour settlement → default 4:1")
+
+
+# ---------------------------------------------------------------
+# Sprint 2B — Dev card timing rule tests
+# ---------------------------------------------------------------
+
+## Player may only play 1 dev card per turn.
+func _test_dev_card_timing_max_one_per_turn() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	p.dev_cards = [0, 0]          # 2 Knights
+	state.robber_tile_key = "0,0"
+	state.phase = GameState.Phase.BUILD
+
+	var ok1: bool = state.play_knight(p, 0)   # 1st Knight — should succeed
+	state.phase = GameState.Phase.BUILD        # reset after robber move
+	var ok2: bool = state.play_knight(p, 0)   # 2nd Knight same turn — must fail
+
+	_runner.assert_true(ok1,  "Dev card timing: first Knight succeeds")
+	_runner.assert_false(ok2, "Dev card timing: second Knight same turn blocked")
+
+
+## Player cannot play a dev card they bought on the same turn.
+func _test_dev_card_timing_cannot_play_bought_same_turn() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	# Simulate: Knight was bought this turn
+	p.dev_cards = [0]                          # 1 Knight in hand
+	state.dev_cards_new_this_turn[0] = 1       # bought this turn
+	state.robber_tile_key = "0,0"
+
+	var ok: bool = state.play_knight(p, 0)
+	_runner.assert_false(ok, "Dev card timing: cannot play card bought this turn")
+
+	# Next turn: counter resets → should be playable
+	state.dev_cards_new_this_turn = {}
+	state.dev_cards_played_this_turn = 0
+	state.phase = GameState.Phase.BUILD
+	var ok2: bool = state.play_knight(p, 0)
+	_runner.assert_true(ok2, "Dev card timing: same card playable next turn after reset")
+
+
+# ---------------------------------------------------------------
+# Sprint 2C — Player-to-player trade tests
+# ---------------------------------------------------------------
+
+## Valid trade executes: resources move between players correctly.
+func _test_player_trade_executes() -> void:
+	var state := _make_state()
+	var p0: RefCounted = state.players[0]
+	var p1: RefCounted = state.players[1]
+	p0.resources[PlayerData.RES_LUMBER] = 3
+	p1.resources[PlayerData.RES_BRICK]  = 2
+
+	var ok: bool = state.player_trade(p0, p1,
+		{PlayerData.RES_LUMBER: 2},   # offer 2 Lumber
+		{PlayerData.RES_BRICK:  1})   # want 1 Brick
+	_runner.assert_true(ok,  "Player trade: valid trade returns true")
+	_runner.assert_eq(p0.resources[PlayerData.RES_LUMBER], 1, "Player trade: P0 gave 2 Lumber (3→1)")
+	_runner.assert_eq(p0.resources[PlayerData.RES_BRICK],  1, "Player trade: P0 received 1 Brick")
+	_runner.assert_eq(p1.resources[PlayerData.RES_LUMBER], 2, "Player trade: P1 received 2 Lumber")
+	_runner.assert_eq(p1.resources[PlayerData.RES_BRICK],  1, "Player trade: P1 gave 1 Brick (2→1)")
+
+
+## Trade fails if offering player lacks the offered resource.
+func _test_player_trade_rejects_when_insufficient() -> void:
+	var state := _make_state()
+	var p0: RefCounted = state.players[0]
+	var p1: RefCounted = state.players[1]
+	p0.resources[PlayerData.RES_ORE] = 1   # has only 1 Ore
+	p1.resources[PlayerData.RES_GRAIN] = 2
+
+	var ok: bool = state.player_trade(p0, p1,
+		{PlayerData.RES_ORE: 2},           # trying to offer 2 but only has 1
+		{PlayerData.RES_GRAIN: 1})
+	_runner.assert_false(ok, "Player trade: insufficient offer resource rejects trade")
+	_runner.assert_eq(p0.resources[PlayerData.RES_ORE], 1, "Player trade: P0 resources unchanged on reject")

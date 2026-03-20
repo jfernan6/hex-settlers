@@ -144,6 +144,10 @@ func _process(delta: float) -> void:
 			"cactus_sway":
 				# Very slow desert wind sway
 				mdl.rotation_degrees.z = sin(_time * 0.30 + entry.offset) * 1.8
+			"wheat_sway":
+				# Each stalk sways at its own phase — creates flowing field effect
+				mdl.rotation_degrees.z = sin(_time * 1.4 + entry.offset) * 7.0
+				mdl.rotation_degrees.x = sin(_time * 0.9 + entry.offset * 1.3) * 4.0
 
 	# Pulse vertex slots during SETUP and BUILD (attract player attention)
 	var in_active_phase: bool = (_state.phase == GameState.Phase.SETUP or
@@ -419,6 +423,12 @@ func _create_hud() -> void:
 	_hud.roll_dice_pressed.connect(_on_roll_dice)
 	_hud.end_turn_pressed.connect(_on_end_turn)
 	_hud.buy_dev_card_pressed.connect(_try_buy_dev_card)
+	# Sprint 1C: dev card hand signals
+	_hud.play_dev_card_requested.connect(_on_play_dev_card_requested)
+	_hud.year_of_plenty_chosen.connect(_on_year_of_plenty_chosen)
+	_hud.monopoly_chosen.connect(_on_monopoly_chosen)
+	# Sprint 2C: trade signal
+	_hud.trade_proposed.connect(_on_trade_proposed)
 	add_child(_hud)
 	print("[HUD] Created")
 
@@ -804,6 +814,9 @@ func _on_roll_dice() -> void:
 		_state.dice_rolled.emit(_god_forced_roll)
 	else:
 		_state.roll_dice()
+	# Sprint 1B: dice animation (only for human — AI rolls too fast to animate)
+	if not _state.current_player().is_ai:
+		_hud.show_dice_animation(_state.last_roll)
 	if _state.phase == GameState.Phase.ROBBER_MOVE:
 		_set_tile_picking(true)
 	_refresh_hud()
@@ -913,7 +926,9 @@ func _try_buy_dev_card() -> void:
 		_refresh_hud()
 
 
-func _try_play_dev_card(player: RefCounted, card_type: int, pidx: int) -> void:
+## Sprint 1C: r1/r2 are set by human via picker (>= 0) or -1 to use AI defaults.
+func _try_play_dev_card(player: RefCounted, card_type: int, pidx: int,
+		r1: int = -1, r2: int = -1) -> void:
 	match card_type:
 		DevCards.Type.KNIGHT:
 			if _state.play_knight(player, pidx):
@@ -922,29 +937,111 @@ func _try_play_dev_card(player: RefCounted, card_type: int, pidx: int) -> void:
 				else:
 					_set_tile_picking(true)
 				_refresh_hud()
+			else:
+				_hud.set_message("Cannot play Knight card right now (max 1 per turn, or bought this turn)")
 		DevCards.Type.ROAD_BUILDING:
-			_state.play_road_building(player)
-			_refresh_hud()
+			if _state.play_road_building(player):
+				_refresh_hud()
+			else:
+				_hud.set_message("Cannot play Road Building right now")
 		DevCards.Type.YEAR_OF_PLENTY:
-			# AI picks 2 most-needed resources; human gets ore+grain as default
-			var r1 := AIPlayer.most_needed_resource(player) if player.is_ai else PlayerData.RES_ORE
-			var r2 := PlayerData.RES_GRAIN
-			_state.play_year_of_plenty(player, r1, r2)
-			_refresh_hud()
+			# r1/r2 from human picker, or AI picks
+			var res1: int = r1 if r1 >= 0 else AIPlayer.most_needed_resource(player)
+			var res2: int = r2 if r2 >= 0 else PlayerData.RES_GRAIN
+			if _state.play_year_of_plenty(player, res1, res2):
+				_refresh_hud()
+			else:
+				_hud.set_message("Cannot play Year of Plenty right now")
 		DevCards.Type.MONOPOLY:
-			# AI monopolizes the resource opponents have most of
-			var best_res := 0
-			var best_amt := -1
-			for r in [0, 1, 2, 3, 4]:
-				var total := 0
-				for i in _state.players.size():
-					if i != _state.current_player_index:
-						total += _state.players[i].resources.get(r, 0)
-				if total > best_amt:
-					best_amt = total
-					best_res = r
-			_state.play_monopoly(player, best_res)
+			var mono_res: int
+			if r1 >= 0:
+				mono_res = r1
+			else:
+				# AI: pick resource opponents have most of
+				var best_r := 0; var best_amt := -1
+				for r in [0, 1, 2, 3, 4]:
+					var total := 0
+					for i in _state.players.size():
+						if i != _state.current_player_index:
+							total += _state.players[i].resources.get(r, 0)
+					if total > best_amt:
+						best_amt = total; best_r = r
+				mono_res = best_r
+			if _state.play_monopoly(player, mono_res):
+				_refresh_hud()
+			else:
+				_hud.set_message("Cannot play Monopoly right now")
+
+
+# Sprint 1C: human pressed a dev card button in the hand display
+func _on_play_dev_card_requested(card_type: int) -> void:
+	var player = _state.current_player()
+	if player.is_ai:
+		return
+	if _state.phase != GameState.Phase.BUILD:
+		_hud.set_message("Dev cards can only be played during your build phase")
+		return
+	var pidx: int = _state.current_player_index
+	match card_type:
+		DevCards.Type.YEAR_OF_PLENTY:
+			_hud.show_resource_picker("yop")   # picker will emit year_of_plenty_chosen
+		DevCards.Type.MONOPOLY:
+			_hud.show_resource_picker("mono")  # picker will emit monopoly_chosen
+		_:
+			_try_play_dev_card(player, card_type, pidx)
+
+
+func _on_year_of_plenty_chosen(r1: int, r2: int) -> void:
+	var player = _state.current_player()
+	_try_play_dev_card(player, DevCards.Type.YEAR_OF_PLENTY,
+			_state.current_player_index, r1, r2)
+
+
+func _on_monopoly_chosen(res: int) -> void:
+	var player = _state.current_player()
+	_try_play_dev_card(player, DevCards.Type.MONOPOLY,
+			_state.current_player_index, res, -1)
+
+
+# Sprint 2C: trade proposal from human player
+func _on_trade_proposed(offer: Dictionary, want: Dictionary, to_player_idx: int) -> void:
+	if to_player_idx < 0 or to_player_idx >= _state.players.size():
+		return
+	var from_player = _state.current_player()
+	var to_player   = _state.players[to_player_idx]
+
+	# AI always evaluates — accept if trade is neutral or better for them
+	var accepted := false
+	if to_player.is_ai:
+		accepted = _ai_evaluate_trade(to_player, offer, want)
+	else:
+		# Human-to-human: auto-accept for now (full UI would require async flow)
+		accepted = true
+
+	if accepted:
+		if _state.player_trade(from_player, to_player, offer, want):
 			_refresh_hud()
+			_hud.set_message("Trade accepted by %s!" % to_player.player_name)
+		else:
+			_hud.set_message("Trade failed — check resources")
+	else:
+		_hud.set_message("%s declined the trade offer." % to_player.player_name)
+
+
+## Simple heuristic: AI accepts if they net-gain ≥ 0 useful resources.
+func _ai_evaluate_trade(ai_player, offer: Dictionary, want: Dictionary) -> bool:
+	# Check AI actually has what's wanted
+	for r in want:
+		if ai_player.resources.get(r, 0) < want[r]:
+			return false
+	# Accept if the offered resources are something the AI is low on
+	var gain_value := 0
+	for r in offer:
+		gain_value += offer[r] * (5 - ai_player.resources.get(r, 0))
+	var cost_value := 0
+	for r in want:
+		cost_value += want[r] * (1 + ai_player.resources.get(r, 0))
+	return gain_value >= cost_value
 
 
 func _on_dice_rolled(_roll: int) -> void:

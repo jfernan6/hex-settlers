@@ -63,6 +63,7 @@ const NUMBER_TOKENS: Array = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11,
 ## so game logic can look up which tiles a settlement is adjacent to.
 func generate(parent: Node3D) -> Dictionary:
 	_spawn_ocean_plane(parent)   # single unified surface: sand island + ocean
+	_spawn_port_markers(parent)  # 9 harbor markers around the board edge
 	var positions := HexGrid.get_board_positions()
 	var terrains := _build_shuffled_terrains()
 	var tokens := NUMBER_TOKENS.duplicate()
@@ -170,14 +171,16 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		# Flat cream disc sitting on the tile (smooth circle, 32 segments)
 		var disc := MeshInstance3D.new()
 		var dm   := CylinderMesh.new()
-		dm.top_radius = 0.40; dm.bottom_radius = 0.40
+		dm.top_radius = 0.46; dm.bottom_radius = 0.46
 		dm.height = 0.018; dm.radial_segments = 32
 		disc.mesh = dm
 		var dmat := StandardMaterial3D.new()
-		dmat.albedo_color = Color(0.94, 0.90, 0.74)
-		dmat.roughness    = 0.82
+		dmat.albedo_color    = Color(0.94, 0.90, 0.74)
+		dmat.roughness       = 0.82
+		dmat.no_depth_test   = true   # always visible — rocks/models can't cover it
+		dmat.render_priority = -1     # draws before the label so label composites on top
 		disc.material_override = dmat
-		disc.position = Vector3(0, 0.134, 0)   # just above tile top (tile top = 0.125)
+		disc.position = Vector3(0, 0.134, 0)
 		container.add_child(disc)
 
 		# Combined number + pips label — one block = guaranteed shared centre axis
@@ -187,7 +190,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		tok_label.billboard            = BaseMaterial3D.BILLBOARD_ENABLED
 		tok_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		tok_label.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-		tok_label.font_size            = 64
+		tok_label.font_size            = 82
 		tok_label.pixel_size           = 0.003
 		tok_label.outline_size         = 9
 		tok_label.outline_modulate     = Color(0.93, 0.89, 0.72)
@@ -195,27 +198,6 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		tok_label.render_priority      = 1
 		tok_label.no_depth_test        = true
 		container.add_child(tok_label)
-
-	# Resource type overlay label — color-coded, always readable
-	const RES_LABELS := {
-		TerrainType.FOREST:    ["LUMBER", Color(0.30, 0.80, 0.25)],
-		TerrainType.HILLS:     ["BRICK",  Color(0.90, 0.38, 0.10)],
-		TerrainType.PASTURE:   ["WOOL",   Color(0.60, 0.92, 0.40)],
-		TerrainType.FIELDS:    ["GRAIN",  Color(1.00, 0.88, 0.10)],
-		TerrainType.MOUNTAINS: ["ORE",    Color(0.70, 0.70, 0.78)],
-		TerrainType.DESERT:    ["",       Color(0, 0, 0)],
-	}
-	if terrain in RES_LABELS and RES_LABELS[terrain][0] != "":
-		var res_lbl := Label3D.new()
-		res_lbl.text        = RES_LABELS[terrain][0]
-		res_lbl.position    = Vector3(0, 0.46, 0)  # below pips
-		res_lbl.billboard   = BaseMaterial3D.BILLBOARD_ENABLED
-		res_lbl.font_size   = 52
-		res_lbl.pixel_size  = 0.003
-		res_lbl.outline_size = 5
-		res_lbl.outline_modulate = Color(0.05, 0.05, 0.05)
-		res_lbl.modulate    = RES_LABELS[terrain][1]
-		container.add_child(res_lbl)
 
 	return [area, tile]
 
@@ -300,6 +282,7 @@ func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 			pass   # animated grass shader carries the tile — sheep to be revisited
 		TerrainType.FIELDS:
 			_add_windmill(container)
+			_add_grain_field(container)
 		TerrainType.DESERT:
 			_add_desert_scene(container)
 
@@ -341,16 +324,74 @@ func _load_gltf_runtime(path: String) -> Node3D:
 	return root as Node3D
 
 
+## FIELDS — ring of wheat stalks, each swaying independently in the breeze.
+## Positions are arranged at r≈0.55–0.65 so they clear the token disc (r=0.40).
+func _add_grain_field(container: Node3D) -> void:
+	var stem_col  := _solid_mat(Color(0.80, 0.68, 0.08), 0.93, 0.0)
+	var head_col  := _solid_mat(Color(0.95, 0.83, 0.12), 0.88, 0.0)
+
+	# 8 stalks at r≈0.70 — wide enough to clear the token disc (r=0.46) and avoid
+	# projecting under the no_depth_test token from the camera at (0,10,9).
+	var ring: Array[Vector3] = [
+		Vector3( 0.70, 0,  0.00),
+		Vector3( 0.54, 0,  0.46),
+		Vector3( 0.20, 0,  0.67),
+		Vector3(-0.45, 0,  0.54),
+		Vector3(-0.70, 0,  0.00),
+		Vector3(-0.54, 0, -0.46),
+		Vector3( 0.00, 0, -0.70),
+		Vector3( 0.54, 0, -0.46),
+	]
+
+	for base_pos in ring:
+		# Each stalk is a pivot so the whole stalk+head sways as one unit
+		var pivot := Node3D.new()
+		pivot.position = Vector3(base_pos.x, 0.125, base_pos.z)
+		# Slight random lean per stalk for a natural field look
+		pivot.rotation_degrees.z = randf_range(-6.0, 6.0)
+		container.add_child(pivot)
+
+		# Stem — tapered thin cylinder
+		var stalk := MeshInstance3D.new()
+		var sm    := CylinderMesh.new()
+		sm.top_radius    = 0.012
+		sm.bottom_radius = 0.018
+		sm.height        = 0.44
+		sm.radial_segments = 5
+		stalk.mesh = sm
+		stalk.position = Vector3(0, 0.22, 0)
+		stalk.material_override = stem_col
+		pivot.add_child(stalk)
+
+		# Grain head — elongated oval, bristly wheat appearance
+		var head := MeshInstance3D.new()
+		var hm   := SphereMesh.new()
+		hm.radius        = 0.038
+		hm.height        = 0.16
+		hm.radial_segments = 6
+		hm.rings         = 4
+		head.mesh = hm
+		head.scale    = Vector3(1.0, 2.6, 1.0)
+		head.position = Vector3(0, 0.48, 0)
+		head.material_override = head_col
+		pivot.add_child(head)
+
+		# Each stalk gets a unique offset so they don't all sway in sync
+		_anim_models.append({"node": pivot, "type": "wheat_sway",
+				"offset": randf() * TAU})
+
+
 ## FIELDS — animated windmill with spinning sail cross
 func _add_windmill(container: Node3D) -> void:
 	var stone  := _solid_mat(Color(0.72, 0.70, 0.65), 0.90, 0.05)
 	var wood   := _solid_mat(Color(0.45, 0.35, 0.22), 0.88, 0.0)
 	var canvas := _solid_mat(Color(0.88, 0.84, 0.70), 0.85, 0.0)
 
-	# Root — offset so token disc at centre stays clear
+	# Root — 1.5× bigger than base design; token disc still clear at centre
 	var root := Node3D.new()
-	root.position = Vector3(0.73, 0.125, 0.11)
+	root.position      = Vector3(0.73, 0.125, 0.11)
 	root.rotation_degrees.y = randf_range(-15.0, 15.0)
+	root.scale         = Vector3(1.5, 1.5, 1.5)
 	container.add_child(root)
 
 	# Tapered stone tower (8-sided for faceted look)
@@ -977,6 +1018,75 @@ void fragment() {
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	return mat
+
+
+## Sprint 2A — 9 harbour markers around the board perimeter.
+## Each marker is a small glowing post + billboard label (trade rate + resource).
+func _spawn_port_markers(parent: Node3D) -> void:
+	const RES_COLORS: Array = [
+		Color(0.12, 0.42, 0.08),  # Lumber
+		Color(0.65, 0.20, 0.06),  # Brick
+		Color(0.28, 0.68, 0.12),  # Wool
+		Color(0.85, 0.70, 0.04),  # Grain
+		Color(0.38, 0.40, 0.50),  # Ore
+	]
+	const RES_SHORT: Array = ["LU", "BR", "WO", "GR", "OR"]
+
+	# Harbour data: type (-1=generic 3:1, 0-4=specific 2:1), world-xz pos, two vertex xz pairs
+	const HARBORS: Array = [
+		{"type": -1, "px": -5.51, "pz":  3.18},
+		{"type": -1, "px": -2.21, "pz":  5.73},
+		{"type":  3, "px":  3.31, "pz":  4.46},
+		{"type":  4, "px":  5.51, "pz":  3.18},
+		{"type": -1, "px":  5.51, "pz": -3.18},
+		{"type":  0, "px":  2.21, "pz": -5.73},
+		{"type": -1, "px": -3.31, "pz": -4.46},
+		{"type":  1, "px": -5.51, "pz": -3.18},
+		{"type":  2, "px": -5.51, "pz":  0.64},
+	]
+
+	for h: Dictionary in HARBORS:
+		var h_type: int = h["type"]
+		var pos := Vector3(h["px"], 0.10, h["pz"])
+
+		# Glowing beacon post
+		var post := MeshInstance3D.new()
+		var pm := CylinderMesh.new()
+		pm.top_radius = 0.06; pm.bottom_radius = 0.08; pm.height = 0.28
+		pm.radial_segments = 8
+		post.mesh = pm
+		post.position = pos + Vector3(0, 0.14, 0)
+		var pier_col: Color
+		if h_type == -1:
+			pier_col = Color(0.80, 0.65, 0.30)  # tan wood for generic
+		else:
+			pier_col = RES_COLORS[h_type]
+		var pmat := StandardMaterial3D.new()
+		pmat.albedo_color = pier_col
+		pmat.emission_enabled = true
+		pmat.emission = pier_col * 0.6
+		pmat.emission_energy_multiplier = 0.8
+		post.material_override = pmat
+		parent.add_child(post)
+
+		# Billboard label (rate + resource abbreviation)
+		var lbl := Label3D.new()
+		if h_type == -1:
+			lbl.text = "3:1"
+			lbl.modulate = Color(1.0, 0.90, 0.55)
+		else:
+			lbl.text = "2:1\n%s" % RES_SHORT[h_type]
+			lbl.modulate = RES_COLORS[h_type] * 1.8
+		lbl.position = pos + Vector3(0, 0.55, 0)
+		lbl.billboard      = BaseMaterial3D.BILLBOARD_ENABLED
+		lbl.pixel_size     = 0.004
+		lbl.font_size      = 52
+		lbl.outline_size   = 7
+		lbl.outline_modulate = Color(0.0, 0.0, 0.0, 0.85)
+		lbl.no_depth_test  = true
+		lbl.render_priority = 1
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		parent.add_child(lbl)
 
 
 func _solid_mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:

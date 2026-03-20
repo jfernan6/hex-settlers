@@ -50,6 +50,10 @@ var roads: Array = []
 # Dev card deck
 var dev_deck: Array = []
 
+# Sprint 2B — dev card timing rules
+var dev_cards_new_this_turn: Dictionary = {}  # card_type -> count bought this turn
+var dev_cards_played_this_turn: int = 0       # max 1 per turn
+
 # Bonus VP tracking
 var longest_road_holder: int  = -1
 var longest_road_length: int  = 0
@@ -442,6 +446,8 @@ func buy_dev_card(player: RefCounted) -> bool:
 		_check_win()
 	else:
 		player.dev_cards.append(card)
+		# Sprint 2B: track so it can't be played this same turn
+		dev_cards_new_this_turn[card] = dev_cards_new_this_turn.get(card, 0) + 1
 		Log.info("[GAME] %s drew %s  (deck: %d left)" % [
 			player.player_name, DevCards.NAMES[card], dev_deck.size()])
 		GameEvents.record(GameEvents.EventType.DEV_CARD_BOUGHT, player.player_name,
@@ -449,39 +455,71 @@ func buy_dev_card(player: RefCounted) -> bool:
 	return true
 
 
+## Sprint 2B — returns false if timing rules prevent playing this card.
+## Rules: max 1 dev card per turn; can't play a card bought this same turn.
+func _can_play_card(player: RefCounted, card_type: int) -> bool:
+	if card_type not in player.dev_cards:
+		return false
+	if dev_cards_played_this_turn >= 1:
+		Log.warn("[GAME] %s already played a dev card this turn (max 1)" % player.player_name)
+		return false
+	# How many of this type did the player buy this turn?
+	var bought_now: int = dev_cards_new_this_turn.get(card_type, 0)
+	if bought_now > 0:
+		# Count how many they own total vs. bought this turn
+		var owned: int = 0
+		for c in player.dev_cards:
+			if c == card_type:
+				owned += 1
+		if owned <= bought_now:
+			Log.warn("[GAME] %s can't play %s — bought this same turn" % [
+				player.player_name, DevCards.NAMES[card_type]])
+			return false
+	return true
+
+
 func play_knight(player: RefCounted, player_idx: int) -> bool:
-	if DevCards.Type.KNIGHT not in player.dev_cards:
+	if not _can_play_card(player, DevCards.Type.KNIGHT):
 		return false
 	player.dev_cards.erase(DevCards.Type.KNIGHT)
 	player.knight_count += 1
+	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Knight (total knights: %d)" % [player.player_name, player.knight_count])
+	GameEvents.record(GameEvents.EventType.DEV_CARD_PLAYED, player.player_name,
+		{"card": "Knight", "knight_total": player.knight_count})
 	_check_largest_army()
 	phase = Phase.ROBBER_MOVE
 	return true
 
 
 func play_road_building(player: RefCounted) -> bool:
-	if DevCards.Type.ROAD_BUILDING not in player.dev_cards:
+	if not _can_play_card(player, DevCards.Type.ROAD_BUILDING):
 		return false
 	player.dev_cards.erase(DevCards.Type.ROAD_BUILDING)
 	player.free_roads += 2
+	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Road Building — 2 free roads granted" % player.player_name)
+	GameEvents.record(GameEvents.EventType.DEV_CARD_PLAYED, player.player_name,
+		{"card": "Road Building"})
 	return true
 
 
 func play_year_of_plenty(player: RefCounted, res1: int, res2: int) -> bool:
-	if DevCards.Type.YEAR_OF_PLENTY not in player.dev_cards:
+	if not _can_play_card(player, DevCards.Type.YEAR_OF_PLENTY):
 		return false
 	player.dev_cards.erase(DevCards.Type.YEAR_OF_PLENTY)
 	player.add_resource(res1)
 	player.add_resource(res2)
+	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Year of Plenty: +1 %s +1 %s" % [
 		player.player_name, PlayerData.RES_NAMES[res1], PlayerData.RES_NAMES[res2]])
+	GameEvents.record(GameEvents.EventType.DEV_CARD_PLAYED, player.player_name,
+		{"card": "Year of Plenty", "r1": PlayerData.RES_NAMES[res1], "r2": PlayerData.RES_NAMES[res2]})
 	return true
 
 
 func play_monopoly(player: RefCounted, res: int) -> bool:
-	if DevCards.Type.MONOPOLY not in player.dev_cards:
+	if not _can_play_card(player, DevCards.Type.MONOPOLY):
 		return false
 	player.dev_cards.erase(DevCards.Type.MONOPOLY)
 	var total := 0
@@ -493,52 +531,101 @@ func play_monopoly(player: RefCounted, res: int) -> bool:
 			p.resources[res] = 0
 			total += amt
 	player.add_resource(res, total)
+	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Monopoly on %s — stole %d total" % [
 		player.player_name, PlayerData.RES_NAMES[res], total])
+	GameEvents.record(GameEvents.EventType.DEV_CARD_PLAYED, player.player_name,
+		{"card": "Monopoly", "resource": PlayerData.RES_NAMES[res], "stolen": total})
 	return true
 
 
-# --- Bank trading ---
+# --- Bank trading (Sprint 2A: harbour-aware rates) ---
 
-func bank_trade(player: RefCounted, give_res: int, recv_res: int, rate: int = 4) -> bool:
+## Returns the best trade rate for `give_res` considering the player's harbour access.
+func _get_trade_rate(player: RefCounted, give_res: int) -> int:
+	var best := 4
+	for h: Dictionary in HexGrid.HARBORS:
+		var v1 := Vector3(h["v1x"], 0.0, h["v1z"])
+		var v2 := Vector3(h["v2x"], 0.0, h["v2z"])
+		var at_port := false
+		for spos in player.settlement_positions:
+			if _dist_xz(spos, v1) < 0.25 or _dist_xz(spos, v2) < 0.25:
+				at_port = true
+				break
+		if not at_port:
+			continue
+		var h_type: int = h["type"]
+		if h_type == HexGrid.HARBOR_GENERIC:
+			best = mini(best, 3)
+		elif h_type == give_res:
+			best = mini(best, 2)
+	return best
+
+
+func bank_trade(player: RefCounted, give_res: int, recv_res: int) -> bool:
+	var rate: int = _get_trade_rate(player, give_res)
 	if player.resources.get(give_res, 0) < rate:
 		print("[GAME] %s cannot afford bank trade (%d %s needed)" % [
 			player.player_name, rate, PlayerData.RES_NAMES[give_res]])
 		return false
 	player.resources[give_res] -= rate
 	player.add_resource(recv_res)
-	Log.info("[GAME] %s bank trade: %d %s → 1 %s" % [
+	Log.info("[GAME] %s bank trade: %d %s → 1 %s (rate %d:1)" % [
 		player.player_name, rate,
-		PlayerData.RES_NAMES[give_res], PlayerData.RES_NAMES[recv_res]])
+		PlayerData.RES_NAMES[give_res], PlayerData.RES_NAMES[recv_res], rate])
 	GameEvents.record(GameEvents.EventType.BANK_TRADE, player.player_name, {
 		"give": PlayerData.RES_NAMES[give_res],
 		"recv": PlayerData.RES_NAMES[recv_res], "rate": rate})
 	return true
 
 
-## Returns the cheapest bank trade the player can make, or -1 if none.
-## Returns [give_res, recv_res] pair, or [] if no trade possible.
+## Returns [give_res, recv_res] for the best available trade, or [] if none possible.
 func best_bank_trade(player: RefCounted) -> Array:
-	# Find surplus resource (4+) and a needed resource (0)
 	var surplus := -1
+	var surplus_rate := 4
 	for r in [0, 1, 2, 3, 4]:
-		if player.resources.get(r, 0) >= 4:
-			surplus = r
+		var rate := _get_trade_rate(player, r)
+		if player.resources.get(r, 0) >= rate:
+			surplus = r; surplus_rate = rate
 			break
 	if surplus < 0:
 		return []
-	# Find the resource they need most (fewest in hand)
 	var need := -1
 	var min_amt := 999
 	for r in [0, 1, 2, 3, 4]:
 		if r == surplus:
 			continue
 		if player.resources.get(r, 0) < min_amt:
-			min_amt = player.resources.get(r, 0)
-			need = r
+			min_amt = player.resources.get(r, 0); need = r
 	if need < 0:
 		return []
 	return [surplus, need]
+
+
+## Sprint 2C — execute a player-to-player trade. Returns true if successful.
+func player_trade(from_player: RefCounted, to_player: RefCounted,
+		offer: Dictionary, want: Dictionary) -> bool:
+	# Validate from_player has what they offer
+	for r in offer:
+		if from_player.resources.get(r, 0) < offer[r]:
+			Log.warn("[TRADE] %s doesn't have enough to offer" % from_player.player_name)
+			return false
+	# Validate to_player has what's wanted
+	for r in want:
+		if to_player.resources.get(r, 0) < want[r]:
+			Log.warn("[TRADE] %s doesn't have what's wanted" % to_player.player_name)
+			return false
+	# Execute
+	for r in offer:
+		from_player.resources[r] -= offer[r]
+		to_player.resources[r]   = to_player.resources.get(r, 0) + offer[r]
+	for r in want:
+		to_player.resources[r]   -= want[r]
+		from_player.resources[r]  = from_player.resources.get(r, 0) + want[r]
+	Log.info("[TRADE] %s ↔ %s completed" % [from_player.player_name, to_player.player_name])
+	GameEvents.record(GameEvents.EventType.BANK_TRADE, from_player.player_name,
+		{"with": to_player.player_name, "offer": offer, "want": want})
+	return true
 
 
 # --- Longest Road ---
@@ -641,6 +728,9 @@ func end_turn() -> void:
 	current_player_index = (current_player_index + 1) % players.size()
 	last_roll = 0
 	phase     = Phase.ROLL
+	# Sprint 2B: reset per-turn dev card counters
+	dev_cards_new_this_turn    = {}
+	dev_cards_played_this_turn = 0
 	Log.info("[GAME] → %s's turn  [%s]" % [current_player().player_name, phase_name()])
 	turn_changed.emit(current_player())
 

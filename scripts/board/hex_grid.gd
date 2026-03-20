@@ -9,6 +9,25 @@ class_name HexGrid
 const HEX_SIZE: float = 1.47   # 1.05 * 1.40 — bigger tiles allow better model scale
 const SQRT3: float = 1.7320508
 
+## Harbour types: -1 = generic 3:1, 0–4 = specific 2:1 matching resource IDs.
+const HARBOR_GENERIC: int = -1
+
+## 9 harbours: type, world-space XZ position of the marker, and the XZ of the
+## two board-edge vertices whose settlements receive the port discount.
+## Vertex y is always HexVertices.SLOT_HEIGHT (0.15) — ignored by _dist_xz checks.
+const HARBORS: Array = [
+	{"type": -1, "px": -5.51, "pz":  3.18, "v1x": -5.145, "v1z":  3.819, "v2x": -5.880, "v2z":  2.546},
+	{"type": -1, "px": -2.21, "pz":  5.73, "v1x": -1.470, "v1z":  5.092, "v2x": -2.940, "v2z":  5.092},
+	{"type":  3, "px":  3.31, "pz":  4.46, "v1x":  3.675, "v1z":  3.819, "v2x":  2.940, "v2z":  5.092},
+	{"type":  4, "px":  5.51, "pz":  3.18, "v1x":  5.880, "v1z":  2.546, "v2x":  5.145, "v2z":  3.819},
+	{"type": -1, "px":  5.51, "pz": -3.18, "v1x":  5.145, "v1z": -3.819, "v2x":  5.880, "v2z": -2.546},
+	{"type":  0, "px":  2.21, "pz": -5.73, "v1x":  1.470, "v1z": -5.092, "v2x":  2.940, "v2z": -5.092},
+	{"type": -1, "px": -3.31, "pz": -4.46, "v1x": -3.675, "v1z": -3.819, "v2x": -2.940, "v2z": -5.092},
+	{"type":  1, "px": -5.51, "pz": -3.18, "v1x": -5.880, "v1z": -2.546, "v2x": -5.145, "v2z": -3.819},
+	{"type":  2, "px": -5.51, "pz":  0.64, "v1x": -5.145, "v1z":  1.273, "v2x": -5.880, "v2z":  0.000},
+]
+
+
 ## Returns the 19 axial positions that make up the standard Catan board.
 ## Arranged as: center (1) + ring 1 (6) + ring 2 (12) = 19
 static func get_board_positions() -> Array[Vector2i]:

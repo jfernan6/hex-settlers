@@ -94,10 +94,11 @@ static func decide_build(player: RefCounted, state: RefCounted,
 	if not trade.is_empty():
 		return {"action": "bank_trade", "params": {"give": trade[0], "recv": trade[1]}}
 
-	# --- Play cards already in hand (free actions) ---
-	var playable := _best_card_to_play(player)
-	if playable >= 0:
-		return {"action": "play_card", "params": {"card": playable}}
+	# --- Play cards already in hand (free actions, if timing rules allow) ---
+	if state.dev_cards_played_this_turn < 1:
+		var playable := _best_card_to_play(player, state)
+		if playable >= 0:
+			return {"action": "play_card", "params": {"card": playable}}
 
 	# --- City: best VP/resource ratio ---
 	if _can_afford(player, state.CITY_COST):
@@ -172,19 +173,23 @@ static func _best_reachable_vertex(vertex_slots: Array, player: RefCounted,
 
 
 ## Returns the best card type to play, or -1 if none.
-static func _best_card_to_play(player: RefCounted) -> int:
-	# Play Knight if available (move robber = strategic)
-	if DevCards.Type.KNIGHT in player.dev_cards:
-		return DevCards.Type.KNIGHT
-	# Year of Plenty — get useful resources
-	if DevCards.Type.YEAR_OF_PLENTY in player.dev_cards:
-		return DevCards.Type.YEAR_OF_PLENTY
-	# Monopoly — grab resources
-	if DevCards.Type.MONOPOLY in player.dev_cards:
-		return DevCards.Type.MONOPOLY
-	# Road Building — free roads
-	if DevCards.Type.ROAD_BUILDING in player.dev_cards:
-		return DevCards.Type.ROAD_BUILDING
+## Respects Sprint 2B timing rules: can't play a card bought this same turn.
+static func _best_card_to_play(player: RefCounted, state: RefCounted = null) -> int:
+	for card_type in [DevCards.Type.KNIGHT, DevCards.Type.YEAR_OF_PLENTY,
+			DevCards.Type.MONOPOLY, DevCards.Type.ROAD_BUILDING]:
+		if card_type not in player.dev_cards:
+			continue
+		# Skip cards bought this turn (timing rule)
+		if state != null:
+			var bought_now: int = state.dev_cards_new_this_turn.get(card_type, 0)
+			if bought_now > 0:
+				var owned := 0
+				for c in player.dev_cards:
+					if c == card_type:
+						owned += 1
+				if owned <= bought_now:
+					continue
+		return card_type
 	return -1
 
 
