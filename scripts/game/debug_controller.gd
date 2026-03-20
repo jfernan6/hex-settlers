@@ -304,12 +304,16 @@ func run_full_game() -> void:
 				# Only end turn if game is still running
 				if _state.phase != PHASE_GAME_OVER:
 					_state.end_turn()
+					# end_turn emits turn_changed → _on_turn_changed restarts the
+					# AI timer. Kill it — debug controller drives all turns.
+					_main._ai_timer.stop()
 
 		# Screenshot every 10 turns, yield every turn so screen updates
 		if turn_count % 10 == 0:
 			await _shot("fg_%02d_turn%d" % [_seq, turn_count])
 		else:
 			await get_tree().process_frame  # keep UI responsive
+		_main._ai_timer.stop()  # kill any timer that fired during the await
 
 	# --- Game over ---
 	var elapsed_final: float = (Time.get_ticks_msec() - start_ms) / 1000.0

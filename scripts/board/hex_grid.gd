@@ -6,7 +6,7 @@ class_name HexGrid
 
 # Size = circumradius of each hex tile (matches CylinderMesh top_radius).
 # Multiply by 1.05 to leave a small visual gap between tiles.
-const HEX_SIZE: float = 1.05
+const HEX_SIZE: float = 1.47   # 1.05 * 1.40 — bigger tiles allow better model scale
 const SQRT3: float = 1.7320508
 
 ## Returns the 19 axial positions that make up the standard Catan board.

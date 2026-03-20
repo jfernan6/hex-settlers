@@ -245,7 +245,7 @@ func _setup_lighting() -> void:
 
 func _setup_camera() -> void:
 	var camera := Camera3D.new()
-	camera.position = Vector3(0.0, 7.8, 7.0)  # slightly lower for more dramatic angle
+	camera.position = Vector3(0.0, 10.0, 9.0)  # zoomed out for larger board (1.40x scale)
 	camera.fov = 62.0                           # wider FOV for cinematic feel
 	add_child(camera)
 	camera.look_at(Vector3(0.0, 0.0, 0.5), Vector3.UP)

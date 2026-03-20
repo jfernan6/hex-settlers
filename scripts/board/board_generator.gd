@@ -139,8 +139,8 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 	var pbr: Dictionary = TERRAIN_PBR[terrain]
 	var tile := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
-	mesh.top_radius = 1.0; mesh.bottom_radius = 1.0
-	mesh.height = 0.25; mesh.radial_segments = 24; mesh.rings = 4  # more verts for shader detail
+	mesh.top_radius = 1.40; mesh.bottom_radius = 1.40
+	mesh.height = 0.25; mesh.radial_segments = 24; mesh.rings = 4
 	tile.mesh = mesh
 	tile.material_override = _make_tile_material(terrain)
 	container.add_child(tile)
@@ -170,7 +170,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 		# Flat cream disc sitting on the tile (smooth circle, 32 segments)
 		var disc := MeshInstance3D.new()
 		var dm   := CylinderMesh.new()
-		dm.top_radius = 0.34; dm.bottom_radius = 0.34
+		dm.top_radius = 0.40; dm.bottom_radius = 0.40
 		dm.height = 0.018; dm.radial_segments = 32
 		disc.mesh = dm
 		var dmat := StandardMaterial3D.new()
@@ -268,22 +268,36 @@ func get_anim_refs() -> Dictionary:
 
 
 const _KEN := "res://assets/models/kenney/hexagon-kit/Models/GLB format/"
+const _QAT := "res://assets/models/quaternius/"
 
-## Places a Kenney model offset from centre so the token disc has room at (0,0).
-## anim_type: "sheep" | "tree" | "mill" | "" (static)
+## Terrain decorations — Quaternius glTF for Forest/Mountains/Hills,
+## procedural for Fields + Desert, none for Pasture (shader carries it).
 func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 	match terrain:
 		TerrainType.FOREST:
-			_place_model(container, _KEN + "unit-tree.glb",
-				Vector3(0.38, 0.13, 0.20), 0.55, randf_range(0, 360), "tree")
+			# 3 varied pines — positions and scales * 1.40 for larger tiles
+			_place_model(container, _QAT + "Pine_1.gltf",
+				Vector3( 0.63, 0.13,  0.35), 0.17, randf_range(0, 360), "tree")
+			_place_model(container, _QAT + "Pine_2.gltf",
+				Vector3(-0.56, 0.13,  0.49), 0.14, randf_range(0, 360), "tree")
+			_place_model(container, _QAT + "Pine_3.gltf",
+				Vector3( 0.35, 0.13, -0.63), 0.15, randf_range(0, 360), "tree")
 		TerrainType.MOUNTAINS:
-			_place_model(container, _KEN + "building-mine.glb",
-				Vector3(0.32, 0.13, -0.12), 0.42, randf_range(0, 360), "")
+			# Rock cluster — varied sizes for natural arrangement
+			_place_model(container, _QAT + "Rock_Medium_1.gltf",
+				Vector3( 0.63, 0.13,  0.14), 0.31, randf_range(0, 360), "")
+			_place_model(container, _QAT + "Rock_Medium_2.gltf",
+				Vector3(-0.59, 0.13,  0.28), 0.25, randf_range(0, 360), "")
+			_place_model(container, _QAT + "Rock_Medium_3.gltf",
+				Vector3( 0.21, 0.13, -0.67), 0.28, randf_range(0, 360), "")
 		TerrainType.HILLS:
-			_place_model(container, _KEN + "building-castle.glb",
-				Vector3(0.00, 0.13, 0.38), 0.32, randf_range(0, 360), "")
+			# Rock path + smaller accent rock
+			_place_model(container, _QAT + "RockPath_Round_Wide.gltf",
+				Vector3( 0.56, 0.13,  0.28), 0.28, randf_range(0, 360), "")
+			_place_model(container, _QAT + "Rock_Medium_1.gltf",
+				Vector3(-0.49, 0.13,  0.49), 0.21, randf_range(0, 360), "")
 		TerrainType.PASTURE:
-			pass   # shader handles visual — sheep to be revisited later
+			pass   # animated grass shader carries the tile — sheep to be revisited
 		TerrainType.FIELDS:
 			_add_windmill(container)
 		TerrainType.DESERT:
@@ -292,16 +306,39 @@ func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 
 func _place_model(container: Node3D, path: String, pos: Vector3,
 		scale_f: float, rot_y: float, anim_type: String) -> void:
-	var scene = load(path)
-	if scene == null or not (scene is PackedScene):
+	var node: Node3D
+	if path.ends_with(".gltf"):
+		node = _load_gltf_runtime(path)
+	else:
+		var scene = load(path)
+		if scene == null or not (scene is PackedScene):
+			return
+		node = scene.instantiate()
+	if node == null:
 		return
-	var node: Node3D = scene.instantiate()
 	node.position           = pos
 	node.scale              = Vector3(scale_f, scale_f, scale_f)
 	node.rotation_degrees.y = rot_y
 	container.add_child(node)
 	if anim_type != "":
 		_anim_models.append({"node": node, "type": anim_type, "offset": randf() * TAU})
+
+
+## Load a .gltf file at runtime using GLTFDocument — works without editor pre-import.
+func _load_gltf_runtime(path: String) -> Node3D:
+	var doc   := GLTFDocument.new()
+	var state := GLTFState.new()
+	var err   := doc.append_from_file(path, state, 0, path.get_base_dir())
+	if err != OK:
+		push_warning("[GLTF] Failed to load %s (err %d)" % [path, err])
+		return null
+	var root: Node = doc.generate_scene(state)
+	if root == null:
+		return null
+	if not (root is Node3D):
+		root.free()
+		return null
+	return root as Node3D
 
 
 ## FIELDS — animated windmill with spinning sail cross
@@ -312,7 +349,7 @@ func _add_windmill(container: Node3D) -> void:
 
 	# Root — offset so token disc at centre stays clear
 	var root := Node3D.new()
-	root.position = Vector3(0.52, 0.125, 0.08)
+	root.position = Vector3(0.73, 0.125, 0.11)
 	root.rotation_degrees.y = randf_range(-15.0, 15.0)
 	container.add_child(root)
 
@@ -373,7 +410,7 @@ func _add_sheep_herd(container: Node3D) -> void:
 
 	# Sheep 1 — grazing: head tilts down/up independently
 	var s1 := Node3D.new()
-	s1.position = Vector3(0.50, 0.125, 0.16)
+	s1.position = Vector3(0.70, 0.125, 0.22)
 	s1.rotation_degrees.y = 40.0
 	container.add_child(s1)
 	var s1_head := _build_sheep(s1)
@@ -382,7 +419,7 @@ func _add_sheep_herd(container: Node3D) -> void:
 
 	# Sheep 2 — just idle body sway
 	var s2 := Node3D.new()
-	s2.position = Vector3(-0.48, 0.125, 0.22)
+	s2.position = Vector3(-0.67, 0.125, 0.31)
 	s2.rotation_degrees.y = -75.0
 	container.add_child(s2)
 	_build_sheep(s2)
@@ -444,7 +481,7 @@ func _add_desert_scene(container: Node3D) -> void:
 	mm.top_radius = 0.20; mm.bottom_radius = 0.24
 	mm.height = 0.15; mm.radial_segments = 12
 	mesa.mesh = mm
-	mesa.position = Vector3(-0.05, 0.20, 0.54)
+	mesa.position = Vector3(-0.07, 0.20, 0.76)
 	mesa.material_override = sandstone
 	container.add_child(mesa)
 
@@ -454,13 +491,13 @@ func _add_desert_scene(container: Node3D) -> void:
 	bm2.top_radius = 0.206; bm2.bottom_radius = 0.226
 	bm2.height = 0.025; bm2.radial_segments = 12
 	band.mesh = bm2
-	band.position = Vector3(-0.05, 0.185, 0.54)
+	band.position = Vector3(-0.07, 0.185, 0.76)
 	band.material_override = _solid_mat(Color(0.60, 0.46, 0.26), 0.95, 0)
 	container.add_child(band)
 
 	# --- Cactus ---
 	var cac := Node3D.new()
-	cac.position = Vector3(0.50, 0.125, 0.22)
+	cac.position = Vector3(0.70, 0.125, 0.31)
 	cac.rotation_degrees.y = randf_range(0, 360)
 	container.add_child(cac)
 
@@ -993,9 +1030,9 @@ uniform vec4  u_sand_wet  : source_color = vec4(0.60, 0.50, 0.33, 1.0);
 uniform vec4  u_shallow   : source_color = vec4(0.10, 0.46, 0.72, 1.0);
 uniform vec4  u_deep      : source_color = vec4(0.01, 0.10, 0.30, 1.0);
 uniform vec4  u_foam      : source_color = vec4(0.88, 0.95, 1.00, 1.0);
-uniform float u_dry_end    = 4.3;
-uniform float u_shore_end  = 5.4;
-uniform float u_ocean_full = 6.8;
+uniform float u_dry_end    = 6.0;
+uniform float u_shore_end  = 7.6;
+uniform float u_ocean_full = 9.5;
 uniform float u_wave_h     = 0.14;
 uniform float u_wave_scale = 1.6;
 
@@ -1071,7 +1108,7 @@ void fragment() {
 	vec3  col     = mix(sand, water, water_t);
 
 	// Fade to deep ocean colour at the plane horizon — hides the carpet edge
-	float edge_fade = smoothstep(18.0, 26.0, r);
+	float edge_fade = smoothstep(25.0, 36.0, r);
 	col = mix(col, u_deep.rgb * 0.6, edge_fade);
 
 	ALBEDO    = col;
