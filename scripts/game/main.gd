@@ -334,70 +334,115 @@ func _create_edge_slots() -> void:
 
 
 func _create_robber() -> void:
-	# Chess Knight / Dark Sorcerer — tall, distinctive, clearly reads as "the threat"
+	# Classic bandit: wide-brimmed hat + eye mask + dark coat + loot bag.
+	# The hat brim is the primary silhouette read at game-board scale.
 	var root := Node3D.new()
 	root.name = "Robber"
-	var metal := Color(0.08, 0.06, 0.12)   # near-black with metallic sheen
 
-	# Base — wide platform
+	var coat  := _robber_mat(Color(0.13, 0.11, 0.10), 0.88, 0.02)   # near-black coat
+	var skin  := _robber_mat(Color(0.78, 0.62, 0.46), 0.90, 0.00)   # warm skin
+	var hat   := _robber_mat(Color(0.10, 0.08, 0.05), 0.92, 0.00)   # very dark brown hat
+	var bag   := _robber_mat(Color(0.55, 0.40, 0.22), 0.95, 0.00)   # burlap sack
+	var belt  := _robber_mat(Color(0.25, 0.15, 0.06), 0.88, 0.05)   # dark leather
+	var mask  := _robber_mat(Color(0.06, 0.05, 0.05), 0.82, 0.00)   # black mask
+
+	# Feet / base — slight flare
 	var base := MeshInstance3D.new()
-	var base_m := CylinderMesh.new()
-	base_m.top_radius = 0.28; base_m.bottom_radius = 0.32
-	base_m.height = 0.08; base_m.radial_segments = 10
-	base.mesh = base_m
-	base.position = Vector3(0, 0.04, 0)
-	base.material_override = _robber_mat(metal, 0.4, 0.6)
-	root.add_child(base)
+	var bm := CylinderMesh.new()
+	bm.top_radius = 0.13; bm.bottom_radius = 0.16; bm.height = 0.07; bm.radial_segments = 8
+	base.mesh = bm; base.position = Vector3(0, 0.035, 0)
+	base.material_override = coat; root.add_child(base)
 
-	# Column — narrow body
-	var col := MeshInstance3D.new()
-	var col_m := CylinderMesh.new()
-	col_m.top_radius = 0.10; col_m.bottom_radius = 0.18
-	col_m.height = 0.55; col_m.radial_segments = 8
-	col.mesh = col_m
-	col.position = Vector3(0, 0.35, 0)
-	col.material_override = _robber_mat(metal, 0.35, 0.65)
-	root.add_child(col)
+	# Body — tapered coat
+	var body := MeshInstance3D.new()
+	var bodm := CylinderMesh.new()
+	bodm.top_radius = 0.09; bodm.bottom_radius = 0.13; bodm.height = 0.38; bodm.radial_segments = 8
+	body.mesh = bodm; body.position = Vector3(0, 0.26, 0)
+	body.material_override = coat; root.add_child(body)
 
-	# Skull sphere
-	var skull := MeshInstance3D.new()
-	var sk_m := SphereMesh.new()
-	sk_m.radius = 0.18; sk_m.height = 0.30; sk_m.radial_segments = 12
-	skull.mesh = sk_m
-	skull.position = Vector3(0, 0.76, 0)
-	skull.material_override = _robber_mat(metal, 0.3, 0.7)
-	root.add_child(skull)
+	# Belt
+	var beltm := MeshInstance3D.new()
+	var belm := CylinderMesh.new()
+	belm.top_radius = 0.10; belm.bottom_radius = 0.115; belm.height = 0.034; belm.radial_segments = 8
+	beltm.mesh = belm; beltm.position = Vector3(0, 0.135, 0)
+	beltm.material_override = belt; root.add_child(beltm)
 
-	# Dark crown/horns — jagged top
-	for angle in [0, 90, 180, 270]:
-		var horn := MeshInstance3D.new()
-		var hm := CylinderMesh.new()
-		hm.top_radius = 0.0; hm.bottom_radius = 0.04; hm.height = 0.18
-		horn.mesh = hm
-		var rad := deg_to_rad(float(angle))
-		horn.position = Vector3(sin(rad) * 0.12, 0.96, cos(rad) * 0.12)
-		horn.material_override = _robber_mat(Color(0.45, 0.03, 0.03), 0.5, 0.3)
-		root.add_child(horn)
+	# Shoulders — slight cape flare
+	var shld := MeshInstance3D.new()
+	var shm := CylinderMesh.new()
+	shm.top_radius = 0.12; shm.bottom_radius = 0.09; shm.height = 0.055; shm.radial_segments = 8
+	shld.mesh = shm; shld.position = Vector3(0, 0.47, 0)
+	shld.material_override = coat; root.add_child(shld)
 
-	# Glowing red eyes
-	for ex in [-0.07, 0.07]:
+	# Head — skin-coloured sphere
+	var head := MeshInstance3D.new()
+	var hm := SphereMesh.new()
+	hm.radius = 0.115; hm.height = 0.23; hm.radial_segments = 12
+	head.mesh = hm; head.position = Vector3(0, 0.585, 0)
+	head.material_override = skin; root.add_child(head)
+
+	# Eye mask — horizontal band across face
+	var maskm := MeshInstance3D.new()
+	var mm := BoxMesh.new()
+	mm.size = Vector3(0.15, 0.044, 0.05)
+	maskm.mesh = mm; maskm.position = Vector3(0, 0.595, -0.088)
+	maskm.material_override = mask; root.add_child(maskm)
+
+	# Glowing amber eyes — shifty thief, not demon
+	# emission_energy_multiplier ≥ 3.0 marks them as always-on (see _set_node_emission)
+	for ex: float in [-0.046, 0.046]:
 		var eye := MeshInstance3D.new()
 		var em := SphereMesh.new()
-		em.radius = 0.04; em.height = 0.06
-		eye.mesh = em
-		eye.position = Vector3(ex, 0.76, -0.15)
+		em.radius = 0.015; em.height = 0.022
+		eye.mesh = em; eye.position = Vector3(ex, 0.595, -0.098)
 		var emat := StandardMaterial3D.new()
-		emat.albedo_color = Color(1.0, 0.05, 0.05)
-		emat.emission_enabled = true
-		emat.emission = Color(1.0, 0.05, 0.05)
-		emat.emission_energy_multiplier = 4.0
-		eye.material_override = emat
-		root.add_child(eye)
+		emat.albedo_color             = Color(0.95, 0.82, 0.20)   # amber gold
+		emat.emission_enabled         = true
+		emat.emission                 = Color(0.95, 0.82, 0.20)
+		emat.emission_energy_multiplier = 3.5                      # ≥3 → skip in glow sweep
+		eye.material_override = emat; root.add_child(eye)
+
+	# Hat crown
+	var crown := MeshInstance3D.new()
+	var crm := CylinderMesh.new()
+	crm.top_radius = 0.080; crm.bottom_radius = 0.090; crm.height = 0.145; crm.radial_segments = 8
+	crown.mesh = crm; crown.position = Vector3(0, 0.777, 0)
+	crown.material_override = hat; root.add_child(crown)
+
+	# Hat brim — wide flat disc, primary bandit silhouette
+	var brim := MeshInstance3D.new()
+	var brimm := CylinderMesh.new()
+	brimm.top_radius = 0.230; brimm.bottom_radius = 0.230; brimm.height = 0.022; brimm.radial_segments = 16
+	brim.mesh = brimm; brim.position = Vector3(0, 0.700, 0)
+	brim.material_override = hat; root.add_child(brim)
+
+	# Hat band — worn leather stripe
+	var band := MeshInstance3D.new()
+	var bandm := CylinderMesh.new()
+	bandm.top_radius = 0.092; bandm.bottom_radius = 0.092; bandm.height = 0.026; bandm.radial_segments = 8
+	band.mesh = bandm; band.position = Vector3(0, 0.712, 0)
+	band.material_override = _robber_mat(Color(0.45, 0.28, 0.10), 0.88, 0.0)
+	root.add_child(band)
+
+	# Loot bag — slung at the hip
+	var sack := MeshInstance3D.new()
+	var sackm := SphereMesh.new()
+	sackm.radius = 0.082; sackm.radial_segments = 8
+	sack.mesh = sackm; sack.scale = Vector3(0.85, 1.0, 0.85)
+	sack.position = Vector3(0.15, 0.29, 0.02)
+	sack.material_override = bag; root.add_child(sack)
+
+	# Bag tie
+	var tie := MeshInstance3D.new()
+	var tiem := CylinderMesh.new()
+	tiem.top_radius = 0.028; tiem.bottom_radius = 0.033; tiem.height = 0.020; tiem.radial_segments = 6
+	tie.mesh = tiem; tie.position = Vector3(0.15, 0.375, 0.02)
+	tie.material_override = belt; root.add_child(tie)
 
 	add_child(root)
 	_robber = root
 	_update_robber_position()
-	Log.info("[ROBBER] Chess-knight robber at %s" % _state.robber_tile_key)
+	Log.info("[ROBBER] Bandit robber at %s" % _state.robber_tile_key)
 
 
 func _robber_mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
@@ -738,7 +783,8 @@ func _set_robber_glow(active: bool) -> void:
 func _set_node_emission(node: Node, active: bool) -> void:
 	if node is MeshInstance3D and node.material_override is StandardMaterial3D:
 		var mat: StandardMaterial3D = node.material_override
-		if mat.albedo_color != Color(1.0, 0.1, 0.1):  # skip glowing red eyes
+		# Skip always-on emitters (eyes) — flagged by emission_energy_multiplier ≥ 3.0
+		if mat.emission_energy_multiplier < 3.0:
 			mat.emission_enabled = active
 			if active:
 				mat.emission = Color(0.9, 0.1, 0.1)
