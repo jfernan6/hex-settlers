@@ -52,13 +52,19 @@ static func _vertex_pip_score(pos: Vector3, tile_data: Dictionary) -> int:
 
 ## Returns the first unoccupied edge connected to player's settlement/road network,
 ## preferring edges that lead toward high-value unoccupied vertices.
-static func pick_road(edge_slots: Array, player: RefCounted, state: RefCounted) -> Object:
+static func pick_road(edge_slots: Array, vertex_slots: Array, player: RefCounted, state: RefCounted) -> Object:
+	var player_idx: int = state.current_player_index
+	var best: Object = null
+	var best_score := -1
 	for slot in edge_slots:
 		if slot.is_occupied:
 			continue
 		if _edge_is_connected(slot, player, state):
-			return slot
-	return null
+			var score := _road_score(slot, vertex_slots, state, player_idx)
+			if score > best_score:
+				best_score = score
+				best = slot
+	return best
 
 
 static func _edge_is_connected(slot: Object, player: RefCounted, state: RefCounted) -> bool:
@@ -88,12 +94,6 @@ static func decide_build(player: RefCounted, state: RefCounted,
 
 	var pidx: int = state.current_player_index
 
-	# --- Aggressive bank trading first: dump 4+ surplus before deciding ---
-	# Keeps resource count low and converts junk into useful cards
-	var trade: Array = state.best_bank_trade(player)
-	if not trade.is_empty():
-		return {"action": "bank_trade", "params": {"give": trade[0], "recv": trade[1]}}
-
 	# --- Play cards already in hand (free actions, if timing rules allow) ---
 	if state.dev_cards_played_this_turn < 1:
 		var playable := _best_card_to_play(player, state)
@@ -112,18 +112,22 @@ static func decide_build(player: RefCounted, state: RefCounted,
 		if best != null:
 			return {"action": "settlement", "params": {"slot": best}}
 
+	# --- Road: only if it leads somewhere (reachable expansion vertex exists) ---
+	if player.free_roads > 0 or _can_afford(player, state.ROAD_COST):
+		var road_slot := pick_road(edge_slots, vertex_slots, player, state)
+		if road_slot != null:
+			var road_score := _road_score(road_slot, vertex_slots, state, pidx)
+			if road_score > 0 or player.free_roads > 0:
+				return {"action": "road", "params": {"slot": road_slot}}
+
 	# --- Dev card: buy when can afford and deck has cards ---
 	if _can_afford(player, state.DEV_COST) and not state.dev_deck.is_empty():
 		return {"action": "dev_card", "params": {}}
 
-	# --- Road: only if it leads somewhere (reachable expansion vertex exists) ---
-	if player.free_roads > 0 or _can_afford(player, state.ROAD_COST):
-		# Only build road if it opens up a valid settlement spot
-		var road_slot := pick_road(edge_slots, player, state)
-		if road_slot != null:
-			var opens_spot := _road_opens_settlement(road_slot, vertex_slots, player, state, pidx)
-			if opens_spot or player.free_roads > 0:
-				return {"action": "road", "params": {"slot": road_slot}}
+	# --- Bank trade last: convert surplus only after direct board progress is exhausted ---
+	var trade: Array = state.best_bank_trade(player)
+	if not trade.is_empty():
+		return {"action": "bank_trade", "params": {"give": trade[0], "recv": trade[1]}}
 
 	return {"action": "end_turn", "params": {}}
 
@@ -141,6 +145,34 @@ static func _road_opens_settlement(road_slot: Object, vertex_slots: Array,
 		if _dist(slot.position, v1) < 0.15 or _dist(slot.position, v2) < 0.15:
 			return true
 	return false
+
+
+static func _road_score(road_slot: Object, vertex_slots: Array, state: RefCounted, pidx: int) -> int:
+	var best_score := -1
+	for slot in vertex_slots:
+		if slot.is_occupied:
+			continue
+		if not state._respects_distance_rule(slot.position):
+			continue
+		if _dist(slot.position, road_slot.v1) >= 0.15 and _dist(slot.position, road_slot.v2) >= 0.15:
+			continue
+		best_score = maxi(best_score, _vertex_pip_score(slot.position, state.tile_data))
+	if best_score >= 0:
+		return best_score
+
+	# No immediate settlement spot: prefer roads that extend from the network into fresh space.
+	var extension_score := 0
+	for end_pos in [road_slot.v1, road_slot.v2]:
+		var touches_existing := false
+		for road in state.roads:
+			if road.player_index != pidx:
+				continue
+			if _dist(road.v1, end_pos) < 0.15 or _dist(road.v2, end_pos) < 0.15:
+				touches_existing = true
+				break
+		if not touches_existing:
+			extension_score += 1
+	return extension_score
 
 
 ## Best vertex reachable from the player's road network that also passes

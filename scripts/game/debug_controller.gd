@@ -185,7 +185,7 @@ func run_debug_play() -> void:
 	_state.phase = PHASE_BUILD
 	var roads_placed := 0
 	for _i in range(5):
-		var slot = AIPlayer.pick_road(_main._edge_slots, p0, _state)
+		var slot = AIPlayer.pick_road(_main._edge_slots, _main._vertex_slots, p0, _state)
 		if slot == null:
 			print("[DBGPLAY] No more connected road slots available")
 			break

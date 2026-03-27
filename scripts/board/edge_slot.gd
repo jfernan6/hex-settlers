@@ -11,6 +11,7 @@ var v1: Vector3  # first endpoint vertex position
 var v2: Vector3  # second endpoint vertex position
 var is_occupied: bool = false
 var owner_index: int = -1
+var is_emphasized: bool = false
 
 var _mat: StandardMaterial3D
 var _mesh_instance: MeshInstance3D
@@ -56,7 +57,7 @@ func _on_input_event(_cam: Camera3D, event: InputEvent, _pos: Vector3, _normal: 
 
 
 func _on_hover_start() -> void:
-	if not is_occupied:
+	if not is_occupied and is_emphasized:
 		_mat.albedo_color = Color(0.2, 1.0, 0.3)
 		_mat.emission = Color(0.1, 0.8, 0.2)
 		_mat.emission_energy_multiplier = 1.2
@@ -64,9 +65,7 @@ func _on_hover_start() -> void:
 
 func _on_hover_end() -> void:
 	if not is_occupied:
-		_mat.albedo_color = Color(0.7, 0.75, 0.85)
-		_mat.emission = Color(0.3, 0.35, 0.5)
-		_mat.emission_energy_multiplier = 0.4
+		set_affordance("legal" if is_emphasized else "neutral")
 
 
 ## Place a road here for a player.
@@ -77,3 +76,27 @@ func occupy(player_color: Color, p_owner_index: int) -> void:
 	_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	_mesh_instance.scale = Vector3(1.0, 1.4, 1.0)
 	print("[EDGE] Road placed at midpoint %s" % position)
+
+
+func set_affordance(mode: String, accent: Color = Color.WHITE) -> void:
+	is_emphasized = false
+	if is_occupied:
+		if mode == "owned":
+			_mat.emission = accent.lightened(0.10)
+			_mat.emission_energy_multiplier = 0.8
+		return
+
+	match mode:
+		"legal":
+			is_emphasized = true
+			_mat.albedo_color = Color(0.74, 0.90, 1.0)
+			_mat.emission = Color(0.34, 0.62, 1.0)
+			_mat.emission_energy_multiplier = 0.95
+		"candidate":
+			_mat.albedo_color = Color(0.42, 0.54, 0.68)
+			_mat.emission = Color(0.18, 0.24, 0.38)
+			_mat.emission_energy_multiplier = 0.35
+		_:
+			_mat.albedo_color = Color(0.7, 0.75, 0.85)
+			_mat.emission = Color(0.3, 0.35, 0.5)
+			_mat.emission_energy_multiplier = 0.4

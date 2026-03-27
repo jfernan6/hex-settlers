@@ -9,6 +9,7 @@ signal slot_clicked(slot)
 var is_occupied: bool = false
 var is_city: bool = false
 var owner_index: int = -1
+var is_emphasized: bool = false
 
 var _mat_disc: StandardMaterial3D
 var _mat_body: StandardMaterial3D
@@ -100,7 +101,7 @@ func _on_input_event(_camera: Camera3D, event: InputEvent, _pos: Vector3, _norma
 
 
 func _on_hover_start() -> void:
-	if not is_occupied:
+	if not is_occupied and is_emphasized:
 		_mat_disc.albedo_color = Color(1.0, 0.95, 0.1)
 		_mat_disc.emission = Color(1.0, 0.8, 0.0)
 		_mat_disc.emission_energy_multiplier = 1.5
@@ -108,9 +109,7 @@ func _on_hover_start() -> void:
 
 func _on_hover_end() -> void:
 	if not is_occupied:
-		_mat_disc.albedo_color = Color(1.0, 0.98, 0.85)
-		_mat_disc.emission = Color(0.9, 0.85, 0.5)
-		_mat_disc.emission_energy_multiplier = 0.5
+		set_affordance("legal" if is_emphasized else "neutral")
 
 
 # ---------------------------------------------------------------
@@ -204,3 +203,49 @@ func _apply_color(color: Color, city: bool) -> void:
 	_mat_body.metallic     = 0.50 if city else 0.12
 	_mat_roof.albedo_color = color.darkened(0.25)
 	_mat_roof.metallic     = 0.30 if city else 0.05
+
+
+func set_affordance(mode: String, accent: Color = Color.WHITE) -> void:
+	is_emphasized = false
+	_set_owner_highlight(false, accent)
+
+	if is_occupied:
+		match mode:
+			"upgrade":
+				is_emphasized = true
+				_set_owner_highlight(true, accent)
+			"owned":
+				_set_owner_highlight(false, accent)
+		return
+
+	match mode:
+		"legal":
+			is_emphasized = true
+			_mat_disc.albedo_color = Color(1.0, 0.92, 0.38)
+			_mat_disc.emission = Color(0.98, 0.77, 0.18)
+			_mat_disc.emission_energy_multiplier = 1.15
+		"blocked":
+			_mat_disc.albedo_color = Color(0.48, 0.32, 0.30)
+			_mat_disc.emission = Color(0.30, 0.12, 0.10)
+			_mat_disc.emission_energy_multiplier = 0.12
+		_:
+			_mat_disc.albedo_color = Color(1.0, 0.98, 0.85)
+			_mat_disc.emission = Color(0.9, 0.85, 0.5)
+			_mat_disc.emission_energy_multiplier = 0.5
+
+
+func _set_owner_highlight(active: bool, accent: Color) -> void:
+	for child in get_children():
+		if not (child is MeshInstance3D):
+			continue
+		var mesh := child as MeshInstance3D
+		if not (mesh.material_override is StandardMaterial3D):
+			continue
+		var mat := mesh.material_override as StandardMaterial3D
+		mat.emission_enabled = true
+		if active:
+			mat.emission = accent.lightened(0.15)
+			mat.emission_energy_multiplier = 1.2
+		elif mesh == _body or mesh == _roof:
+			mat.emission = Color.BLACK
+			mat.emission_energy_multiplier = 0.0

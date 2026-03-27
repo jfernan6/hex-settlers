@@ -19,6 +19,10 @@ func run() -> void:
 	_test_robber_discard()
 	_test_bank_trade()
 	_test_piece_limits()
+	_test_settlement_requires_connected_road()
+	_test_city_requires_owned_settlement()
+	_test_city_rejects_duplicate_upgrade()
+	_test_duplicate_road_rejected()
 	_test_longest_road()
 	_test_largest_army()
 	_test_longest_road_transfer()
@@ -31,6 +35,8 @@ func run() -> void:
 	_test_dev_card_timing_cannot_play_bought_same_turn()
 	_test_player_trade_executes()
 	_test_player_trade_rejects_when_insufficient()
+	_test_move_robber_rejects_invalid_tile()
+	_test_move_robber_rejects_same_tile()
 
 
 # ---------------------------------------------------------------
@@ -171,33 +177,58 @@ func _test_win_above_10_still_triggers() -> void:
 ## Longest Road transfers correctly: losing player loses 2 VP, gaining player gains 2 VP.
 func _test_longest_road_transfer() -> void:
 	var state := _make_state()
-	# Give P0 longest road manually
-	state.longest_road_holder = 0
-	state.longest_road_length = 5
-	state.players[0].victory_points = 2   # from longest road
-	# Now P1 builds a longer road — simulate by calling update with P1 having 6 roads
-	# We can't easily call update_longest_road without real road data, so test VP math directly
-	state.players[0].victory_points -= 2   # P0 loses it
-	state.players[1].victory_points += 2   # P1 gains it
-	_runner.assert_eq(state.players[0].victory_points, 0,
-		"P0 loses 2 VP when Longest Road transferred")
-	_runner.assert_eq(state.players[1].victory_points, 2,
-		"P1 gains 2 VP when Longest Road taken")
+	var p0: RefCounted = state.players[0]
+	var p1: RefCounted = state.players[1]
+	p0.settlement_positions.append(Vector3(0, 0.15, 0))
+	p1.settlement_positions.append(Vector3(10, 0.15, 0))
+
+	for i in range(5):
+		state.roads.append({
+			"player_index": 0,
+			"v1": Vector3(i, 0.15, 0),
+			"v2": Vector3(i + 1, 0.15, 0),
+		})
+	state.update_longest_road()
+	_runner.assert_eq(state.longest_road_holder, 0, "P0 starts with Longest Road")
+	_runner.assert_eq(p0.victory_points, 2, "P0 gains 2 VP for the initial Longest Road")
+
+	for i in range(6):
+		state.roads.append({
+			"player_index": 1,
+			"v1": Vector3(10 + i, 0.15, 0),
+			"v2": Vector3(11 + i, 0.15, 0),
+		})
+	state.update_longest_road()
+	_runner.assert_eq(state.longest_road_holder, 1, "Longest Road transfers to P1 with the longer path")
+	_runner.assert_eq(p0.victory_points, 0, "P0 loses 2 VP when Longest Road transfers away")
+	_runner.assert_eq(p1.victory_points, 2, "P1 gains 2 VP when taking Longest Road")
 
 
 ## Largest Army transfers correctly: losing player loses 2 VP, gaining player gains 2 VP.
 func _test_largest_army_transfer() -> void:
 	var state := _make_state()
-	state.largest_army_holder = 0
-	state.largest_army_size = 3
-	state.players[0].victory_points = 2
-	# Simulate transfer
-	state.players[0].victory_points -= 2
-	state.players[1].victory_points += 2
-	_runner.assert_eq(state.players[0].victory_points, 0,
-		"P0 loses 2 VP when Largest Army transferred")
-	_runner.assert_eq(state.players[1].victory_points, 2,
-		"P1 gains 2 VP when Largest Army taken")
+	var p0: RefCounted = state.players[0]
+	var p1: RefCounted = state.players[1]
+	p0.dev_cards = [0, 0, 0]
+	p1.dev_cards = [0, 0, 0, 0]
+	state.robber_tile_key = "0,-1"
+
+	for _i in range(3):
+		state.phase = GameState.Phase.BUILD
+		state.dev_cards_played_this_turn = 0
+		state.play_knight(p0, 0)
+
+	_runner.assert_eq(state.largest_army_holder, 0, "P0 starts with Largest Army")
+	_runner.assert_eq(p0.victory_points, 2, "P0 gains 2 VP for the initial Largest Army")
+
+	for _i in range(4):
+		state.phase = GameState.Phase.BUILD
+		state.dev_cards_played_this_turn = 0
+		state.play_knight(p1, 1)
+
+	_runner.assert_eq(state.largest_army_holder, 1, "Largest Army transfers to P1 with more knights played")
+	_runner.assert_eq(p0.victory_points, 0, "P0 loses 2 VP when Largest Army transfers away")
+	_runner.assert_eq(p1.victory_points, 2, "P1 gains 2 VP when taking Largest Army")
 
 
 func _test_robber_discard() -> void:
@@ -271,6 +302,73 @@ func _test_piece_limits() -> void:
 	p.resources = {0: 5, 1: 5, 2: 5, 3: 5, 4: 5}
 	ok = state.try_place_city(p, positions[4])
 	_runner.assert_false(ok, "5th city rejected (city limit = 4)")
+
+
+func _test_settlement_requires_connected_road() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	p.resources = {0: 2, 1: 2, 2: 2, 3: 2, 4: 0}
+
+	var blocked: bool = state.try_place_settlement(p, Vector3(5, 0.15, 0))
+	_runner.assert_false(blocked,
+		"Settlement rejected when not connected to the player's road network")
+
+	state.roads.append({
+		"player_index": 0,
+		"v1": Vector3(0, 0.15, 0),
+		"v2": Vector3(HexGrid.HEX_SIZE, 0.15, 0),
+	})
+
+	var ok: bool = state.try_place_settlement(p, Vector3(HexGrid.HEX_SIZE, 0.15, 0))
+	_runner.assert_true(ok,
+		"Settlement allowed when it connects to the player's road endpoint")
+
+
+func _test_city_requires_owned_settlement() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	p.resources = {0: 0, 1: 0, 2: 0, 3: 2, 4: 3}
+
+	var ok: bool = state.try_place_city(p, Vector3(0, 0.15, 0))
+	_runner.assert_false(ok, "City rejected without an existing owned settlement")
+
+
+func _test_city_rejects_duplicate_upgrade() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	var spot := Vector3(0, 0.15, 0)
+	p.settlement_positions.append(spot)
+	p.resources = {0: 0, 1: 0, 2: 0, 3: 4, 4: 6}
+
+	var first_ok: bool = state.try_place_city(p, spot)
+	_runner.assert_true(first_ok, "City upgrade succeeds on an owned settlement")
+
+	var second_ok: bool = state.try_place_city(p, spot)
+	_runner.assert_false(second_ok, "City rejected when the same settlement is already a city")
+
+
+func _test_duplicate_road_rejected() -> void:
+	var state := _make_state()
+	var p: RefCounted = state.players[0]
+	p.resources = {0: 5, 1: 5, 2: 0, 3: 0, 4: 0}
+	p.settlement_positions.append(Vector3(0, 0.15, 0))
+
+	var v1 := Vector3(0, 0.15, 0)
+	var v2 := Vector3(1, 0.15, 0)
+
+	var first_ok: bool = state.try_place_road(p, 0, v1, v2)
+	_runner.assert_true(first_ok, "First road placement succeeds")
+
+	var lumber_after_first: int = p.resources[PlayerData.RES_LUMBER]
+	var brick_after_first: int = p.resources[PlayerData.RES_BRICK]
+
+	var second_ok: bool = state.try_place_road(p, 0, v2, v1)
+	_runner.assert_false(second_ok, "Duplicate road rejected even in reverse direction")
+	_runner.assert_eq(state.roads.size(), 1, "Duplicate road does not increase road count")
+	_runner.assert_eq(p.resources[PlayerData.RES_LUMBER], lumber_after_first,
+		"Duplicate road does not spend Lumber")
+	_runner.assert_eq(p.resources[PlayerData.RES_BRICK], brick_after_first,
+		"Duplicate road does not spend Brick")
 
 
 func _test_longest_road() -> void:
@@ -455,3 +553,33 @@ func _test_player_trade_rejects_when_insufficient() -> void:
 		{PlayerData.RES_GRAIN: 1})
 	_runner.assert_false(ok, "Player trade: insufficient offer resource rejects trade")
 	_runner.assert_eq(p0.resources[PlayerData.RES_ORE], 1, "Player trade: P0 resources unchanged on reject")
+
+
+func _test_move_robber_rejects_invalid_tile() -> void:
+	var state := _make_state_with_tile(0, 0, BoardGen.TerrainType.FOREST, 6)
+	state.phase = GameState.Phase.ROBBER_MOVE
+	state.robber_tile_key = "0,0"
+
+	state.move_robber("9,9")
+	_runner.assert_eq(state.robber_tile_key, "0,0",
+		"Robber ignores invalid tile keys")
+	_runner.assert_eq(state.phase, GameState.Phase.ROBBER_MOVE,
+		"Invalid robber move keeps the game in ROBBER_MOVE phase")
+
+
+func _test_move_robber_rejects_same_tile() -> void:
+	var state := _make_state_with_tile(0, 0, BoardGen.TerrainType.FOREST, 6)
+	state.tile_data["1,0"] = {
+		"terrain": BoardGen.TerrainType.HILLS,
+		"number": 8,
+		"center": HexGrid.axial_to_world(1, 0),
+		"q": 1, "r": 0, "area": null,
+	}
+	state.phase = GameState.Phase.ROBBER_MOVE
+	state.robber_tile_key = "0,0"
+
+	state.move_robber("0,0")
+	_runner.assert_eq(state.robber_tile_key, "0,0",
+		"Robber cannot stay on the same tile")
+	_runner.assert_eq(state.phase, GameState.Phase.ROBBER_MOVE,
+		"Same-tile robber move keeps the game in ROBBER_MOVE phase")

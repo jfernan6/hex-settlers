@@ -11,7 +11,9 @@ var _runner
 func run() -> void:
 	_test_pick_setup_vertex_null_when_blocked()
 	_test_pick_setup_vertex_highest_score()
-	_test_decide_build_bank_trade_first()
+	_test_pick_road_prefers_better_expansion()
+	_test_decide_build_prefers_city_over_bank_trade()
+	_test_decide_build_prefers_settlement_over_bank_trade()
 	_test_decide_build_end_turn_when_nothing()
 
 
@@ -32,6 +34,17 @@ class FakeSlot extends RefCounted:
 
 	func _init(pos: Vector3, occupied: bool = false) -> void:
 		position = pos
+		is_occupied = occupied
+
+
+class FakeEdgeSlot extends RefCounted:
+	var v1: Vector3
+	var v2: Vector3
+	var is_occupied: bool = false
+
+	func _init(p_v1: Vector3, p_v2: Vector3, occupied: bool = false) -> void:
+		v1 = p_v1
+		v2 = p_v2
 		is_occupied = occupied
 
 
@@ -68,20 +81,63 @@ func _test_pick_setup_vertex_highest_score() -> void:
 		"pick_setup_vertex returns slot adjacent to high-pip tile")
 
 
-func _test_decide_build_bank_trade_first() -> void:
+func _test_pick_road_prefers_better_expansion() -> void:
 	var state := _make_state()
 	state.current_player_index = 0
 	var p: RefCounted = state.players[0]
+	p.settlement_positions.append(Vector3(0, 0.15, 0))
 
-	# Give player 4 Lumber and nothing else — should bank trade immediately
-	p.resources = {0: 4, 1: 0, 2: 0, 3: 0, 4: 0}
-	p.free_placements_left = 0
+	var weak_vertex := Vector3(2, 0.15, 0)
+	var strong_vertex := Vector3(0, 0.15, 2)
+	var tile_center := Vector3(0, 0, 3.0)
+	state.tile_data["0,1"] = {
+		"terrain": 0, "number": 6,
+		"center": tile_center, "q": 0, "r": 1, "area": null,
+	}
 
-	var decision: Dictionary = AIPlayer.decide_build(p, state, [], [])
-	_runner.assert_eq(decision.action, "bank_trade",
-		"decide_build returns bank_trade when 4+ surplus exists")
-	_runner.assert_eq(decision.params.give, PlayerData.RES_LUMBER,
-		"Bank trade gives away Lumber surplus")
+	var weak_road := FakeEdgeSlot.new(Vector3(0, 0.15, 0), weak_vertex)
+	var strong_road := FakeEdgeSlot.new(Vector3(0, 0.15, 0), strong_vertex)
+
+	var weak_vertex_slot := FakeSlot.new(weak_vertex)
+	var strong_vertex_slot := FakeSlot.new(strong_vertex)
+	var picked = AIPlayer.pick_road(
+		[weak_road, strong_road],
+		[weak_vertex_slot, strong_vertex_slot],
+		p,
+		state)
+	_runner.assert_true(picked == strong_road,
+		"pick_road prefers the road leading to the higher-value expansion vertex")
+
+
+func _test_decide_build_prefers_city_over_bank_trade() -> void:
+	var state := _make_state()
+	state.current_player_index = 0
+	var p: RefCounted = state.players[0]
+	p.resources = {0: 4, 1: 0, 2: 0, 3: 2, 4: 3}
+	var city_slot := FakeSlot.new(Vector3(0, 0.15, 0), true)
+	city_slot.owner_index = 0
+	city_slot.is_city = false
+
+	var decision: Dictionary = AIPlayer.decide_build(p, state, [city_slot], [])
+	_runner.assert_eq(decision.action, "city",
+		"decide_build prefers a city upgrade over a surplus bank trade")
+
+
+func _test_decide_build_prefers_settlement_over_bank_trade() -> void:
+	var state := _make_state()
+	state.current_player_index = 0
+	var p: RefCounted = state.players[0]
+	p.resources = {0: 4, 1: 1, 2: 1, 3: 1, 4: 0}
+	state.roads.append({
+		"player_index": 0,
+		"v1": Vector3(0, 0.15, 0),
+		"v2": Vector3(HexGrid.HEX_SIZE, 0.15, 0),
+	})
+	var settlement_slot := FakeSlot.new(Vector3(HexGrid.HEX_SIZE, 0.15, 0))
+
+	var decision: Dictionary = AIPlayer.decide_build(p, state, [settlement_slot], [])
+	_runner.assert_eq(decision.action, "settlement",
+		"decide_build prefers a legal settlement over a surplus bank trade")
 
 
 func _test_decide_build_end_turn_when_nothing() -> void:

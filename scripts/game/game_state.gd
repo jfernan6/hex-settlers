@@ -66,6 +66,7 @@ signal game_won(player_ref)
 signal robber_moved(new_tile_key)
 signal bonuses_changed()          # longest road / largest army changed
 signal setup_sub_phase_changed()  # settlement→road within setup turn
+signal resource_payouts_generated(payouts)
 
 
 # --- Setup ---
@@ -237,6 +238,7 @@ func _apply_robber_discard() -> void:
 
 func _collect_resources(roll: int) -> void:
 	var total := 0
+	var payouts: Array = []
 	for key in tile_data:
 		if key == robber_tile_key:
 			continue  # robber blocks production
@@ -247,7 +249,8 @@ func _collect_resources(roll: int) -> void:
 		if res < 0:
 			continue
 		var center: Vector3 = tile.center
-		for p in players:
+		for player_index in range(players.size()):
+			var p = players[player_index]
 			var multiplier := 0
 			for spos in p.settlement_positions:
 				if _dist_xz(spos, center) < PROX:
@@ -255,7 +258,17 @@ func _collect_resources(roll: int) -> void:
 			if multiplier > 0:
 				p.add_resource(res, multiplier)
 				total += multiplier
+				payouts.append({
+					"player_index": player_index,
+					"resource": res,
+					"amount": multiplier,
+					"tile_key": key,
+					"center": center,
+					"terrain": tile.terrain,
+					"roll": roll,
+				})
 	Log.debug("[GAME] Roll %d: %d total resources distributed" % [roll, total])
+	resource_payouts_generated.emit(payouts)
 	if total > 0:
 		GameEvents.record(GameEvents.EventType.RESOURCE_COLLECTED, "all",
 			{"roll": roll, "total": total})
@@ -288,6 +301,12 @@ func _terrain_to_resource(terrain: int) -> int:
 
 func move_robber(tile_key: String) -> void:
 	if phase != Phase.ROBBER_MOVE:
+		return
+	if tile_key not in tile_data:
+		Log.warn("[GAME] Ignoring invalid robber tile %s" % tile_key)
+		return
+	if tile_key == robber_tile_key:
+		Log.warn("[GAME] Robber is already on %s" % tile_key)
 		return
 	robber_tile_key = tile_key
 	Log.info("[GAME] Robber moved to %s" % tile_key)
@@ -342,6 +361,9 @@ func try_place_settlement(player: RefCounted, pos: Vector3) -> bool:
 	if not _respects_distance_rule(pos):
 		print("[GAME] %s: placement violates distance rule (too close to existing settlement)" % player.player_name)
 		return false
+	if not _has_connected_road_for_settlement(player, pos):
+		print("[GAME] %s: settlement must connect to an existing road" % player.player_name)
+		return false
 	player.place_settlement(pos)
 	_check_win()
 	return true
@@ -360,6 +382,12 @@ func _respects_distance_rule(pos: Vector3) -> bool:
 func try_place_city(player: RefCounted, settlement_pos: Vector3) -> bool:
 	if player.city_positions.size() >= MAX_CITIES:
 		print("[GAME] %s has reached max cities (%d)" % [player.player_name, MAX_CITIES])
+		return false
+	if not _has_settlement_at(player, settlement_pos):
+		print("[GAME] %s must upgrade an existing settlement into a city" % player.player_name)
+		return false
+	if _is_city_at(player, settlement_pos):
+		print("[GAME] %s already has a city at %s" % [player.player_name, settlement_pos])
 		return false
 	if not _has_resources(player, CITY_COST):
 		print("[GAME] %s cannot afford city (needs 2 Grain + 3 Ore)" % player.player_name)
@@ -381,6 +409,9 @@ func try_place_road(player: RefCounted, player_idx: int, v1: Vector3, v2: Vector
 	var player_road_count: int = roads.filter(func(r): return r.player_index == player_idx).size()
 	if player_road_count >= MAX_ROADS:
 		print("[GAME] %s has reached max roads (%d)" % [player.player_name, MAX_ROADS])
+		return false
+	if _road_exists(v1, v2):
+		print("[GAME] Road already exists between %s and %s" % [v1, v2])
 		return false
 	# Setup roads are always free (no cost, no Road Building card needed)
 	var setup_free: bool = (phase == Phase.SETUP and setup_sub_phase == SetupSubPhase.PLACE_ROAD)
@@ -760,6 +791,34 @@ func _has_resources(player: RefCounted, cost: Dictionary) -> bool:
 func _spend_resources(player: RefCounted, cost: Dictionary) -> void:
 	for r in cost:
 		player.resources[r] -= cost[r]
+
+
+func _has_settlement_at(player: RefCounted, pos: Vector3) -> bool:
+	for settlement_pos in player.settlement_positions:
+		if _dist_xz(settlement_pos, pos) < 0.1:
+			return true
+	return false
+
+
+func _has_connected_road_for_settlement(player: RefCounted, pos: Vector3) -> bool:
+	var player_idx: int = players.find(player)
+	if player_idx < 0:
+		return false
+	for road in roads:
+		if road.player_index != player_idx:
+			continue
+		if _dist_xz(road.v1, pos) < 0.1 or _dist_xz(road.v2, pos) < 0.1:
+			return true
+	return false
+
+
+func _road_exists(v1: Vector3, v2: Vector3) -> bool:
+	for road in roads:
+		var same_dir := _dist_xz(road.v1, v1) < 0.1 and _dist_xz(road.v2, v2) < 0.1
+		var reverse_dir := _dist_xz(road.v1, v2) < 0.1 and _dist_xz(road.v2, v1) < 0.1
+		if same_dir or reverse_dir:
+			return true
+	return false
 
 
 func _print_all_resources() -> void:

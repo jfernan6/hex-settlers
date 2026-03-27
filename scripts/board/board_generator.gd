@@ -208,6 +208,7 @@ func _spawn_tile(parent: Node3D, q: int, r: int, terrain: int, number: int) -> A
 
 ## Shared circular token texture — generated once, reused by every tile.
 var _token_tex: ImageTexture = null
+var _sheep_billboard_tex: ImageTexture = null
 
 func _get_token_tex() -> ImageTexture:
 	if _token_tex != null:
@@ -230,6 +231,89 @@ func _get_token_tex() -> ImageTexture:
 	_token_tex = ImageTexture.create_from_image(img)
 	return _token_tex
 
+
+func _get_sheep_billboard_tex() -> ImageTexture:
+	if _sheep_billboard_tex != null:
+		return _sheep_billboard_tex
+	var sz := 256
+	var img := Image.create(sz, sz, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+
+	var outline := Color(0.12, 0.10, 0.10, 1.0)
+	var wool := Color(0.98, 0.97, 0.95, 1.0)
+	var wool_shadow := Color(0.88, 0.85, 0.80, 1.0)
+	var face := Color(0.13, 0.11, 0.12, 1.0)
+	var muzzle := Color(0.72, 0.60, 0.58, 1.0)
+	var ear := Color(0.20, 0.14, 0.15, 1.0)
+	var hoof := Color(0.17, 0.12, 0.12, 1.0)
+	var hoof_shadow := Color(0.0, 0.0, 0.0, 0.16)
+
+	_paint_ellipse(img, Vector2(132, 220), Vector2(78, 18), hoof_shadow)
+
+	var body_puffs := [
+		{"center": Vector2(78, 100), "radius": Vector2(30, 27)},
+		{"center": Vector2(106, 82), "radius": Vector2(34, 31)},
+		{"center": Vector2(142, 86), "radius": Vector2(38, 33)},
+		{"center": Vector2(168, 112), "radius": Vector2(33, 30)},
+		{"center": Vector2(131, 125), "radius": Vector2(49, 36)},
+		{"center": Vector2(86, 126), "radius": Vector2(33, 29)},
+		{"center": Vector2(56, 122), "radius": Vector2(24, 22)},
+	]
+	for puff in body_puffs:
+		_paint_ellipse(img, puff.center, puff.radius + Vector2(7, 7), outline)
+	_paint_ellipse(img, Vector2(122, 138), Vector2(75, 34), outline)
+	for puff in body_puffs:
+		_paint_ellipse(img, puff.center + Vector2(0, 8), puff.radius, wool_shadow)
+	for puff in body_puffs:
+		_paint_ellipse(img, puff.center, puff.radius, wool)
+	_paint_ellipse(img, Vector2(122, 134), Vector2(70, 29), wool)
+	_paint_ellipse(img, Vector2(34, 122), Vector2(16, 15), outline)
+	_paint_ellipse(img, Vector2(36, 120), Vector2(12, 11), wool)
+
+	for leg_x in [92, 119, 147, 174]:
+		_paint_rect(img, Rect2i(leg_x - 7, 152, 14, 48), outline)
+		_paint_rect(img, Rect2i(leg_x - 5, 156, 10, 40), hoof)
+		_paint_rect(img, Rect2i(leg_x - 8, 194, 16, 7), outline)
+
+	_paint_rect(img, Rect2i(166, 112, 30, 28), outline)
+	_paint_rect(img, Rect2i(171, 116, 20, 24), face)
+	_paint_ellipse(img, Vector2(208, 124), Vector2(33, 29), outline)
+	_paint_ellipse(img, Vector2(210, 125), Vector2(25, 22), face)
+	_paint_ellipse(img, Vector2(236, 132), Vector2(18, 14), outline)
+	_paint_ellipse(img, Vector2(237, 132), Vector2(13, 10), muzzle)
+	_paint_ellipse(img, Vector2(215, 119), Vector2(4, 4), Color(1.0, 1.0, 1.0, 1.0))
+	_paint_ellipse(img, Vector2(193, 96), Vector2(10, 18), outline)
+	_paint_ellipse(img, Vector2(195, 96), Vector2(7, 13), ear)
+	_paint_ellipse(img, Vector2(214, 97), Vector2(9, 17), outline)
+	_paint_ellipse(img, Vector2(214, 97), Vector2(6, 12), ear)
+	_paint_rect(img, Rect2i(98, 146, 30, 10), Color(0.92, 0.90, 0.86, 1.0))
+
+	_sheep_billboard_tex = ImageTexture.create_from_image(img)
+	return _sheep_billboard_tex
+
+
+func _paint_ellipse(img: Image, center: Vector2, radius: Vector2, color: Color) -> void:
+	var min_x := maxi(0, int(floor(center.x - radius.x)))
+	var max_x := mini(img.get_width() - 1, int(ceil(center.x + radius.x)))
+	var min_y := maxi(0, int(floor(center.y - radius.y)))
+	var max_y := mini(img.get_height() - 1, int(ceil(center.y + radius.y)))
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var nx := (float(x) - center.x) / radius.x
+			var ny := (float(y) - center.y) / radius.y
+			if nx * nx + ny * ny <= 1.0:
+				img.set_pixel(x, y, color)
+
+
+func _paint_rect(img: Image, rect: Rect2i, color: Color) -> void:
+	var min_x := maxi(0, rect.position.x)
+	var max_x := mini(img.get_width(), rect.position.x + rect.size.x)
+	var min_y := maxi(0, rect.position.y)
+	var max_y := mini(img.get_height(), rect.position.y + rect.size.y)
+	for y in range(min_y, max_y):
+		for x in range(min_x, max_x):
+			img.set_pixel(x, y, color)
+
 const KENNEY_TILE_PATHS: Dictionary = {
 	TerrainType.FOREST:    "res://assets/models/tiles/forest.glb",
 	TerrainType.HILLS:     "res://assets/models/tiles/hills.glb",
@@ -250,36 +334,18 @@ func get_anim_refs() -> Dictionary:
 
 
 const _KEN := "res://assets/models/kenney/hexagon-kit/Models/GLB format/"
-const _QAT := "res://assets/models/quaternius/"
 
-## Terrain decorations — Quaternius glTF for Forest/Mountains/Hills,
-## procedural for Fields + Desert, none for Pasture (shader carries it).
+## Terrain decorations — fully self-contained in-repo props.
 func _add_terrain_decoration(container: Node3D, terrain: int) -> void:
 	match terrain:
 		TerrainType.FOREST:
-			# 3 varied pines — positions and scales * 1.40 for larger tiles
-			_place_model(container, _QAT + "Pine_1.gltf",
-				Vector3( 0.63, 0.13,  0.35), 0.17, randf_range(0, 360), "tree")
-			_place_model(container, _QAT + "Pine_2.gltf",
-				Vector3(-0.56, 0.13,  0.49), 0.14, randf_range(0, 360), "tree")
-			_place_model(container, _QAT + "Pine_3.gltf",
-				Vector3( 0.35, 0.13, -0.63), 0.15, randf_range(0, 360), "tree")
+			_add_forest_cluster(container)
 		TerrainType.MOUNTAINS:
-			# Rock cluster — varied sizes for natural arrangement
-			_place_model(container, _QAT + "Rock_Medium_1.gltf",
-				Vector3( 0.63, 0.13,  0.14), 0.31, randf_range(0, 360), "")
-			_place_model(container, _QAT + "Rock_Medium_2.gltf",
-				Vector3(-0.59, 0.13,  0.28), 0.25, randf_range(0, 360), "")
-			_place_model(container, _QAT + "Rock_Medium_3.gltf",
-				Vector3( 0.21, 0.13, -0.67), 0.28, randf_range(0, 360), "")
+			_add_mountain_cluster(container)
 		TerrainType.HILLS:
-			# Rock path + smaller accent rock
-			_place_model(container, _QAT + "RockPath_Round_Wide.gltf",
-				Vector3( 0.56, 0.13,  0.28), 0.28, randf_range(0, 360), "")
-			_place_model(container, _QAT + "Rock_Medium_1.gltf",
-				Vector3(-0.49, 0.13,  0.49), 0.21, randf_range(0, 360), "")
+			_add_hills_brick_scene(container)
 		TerrainType.PASTURE:
-			pass   # animated grass shader carries the tile — sheep to be revisited
+			_add_sheep_herd(container)
 		TerrainType.FIELDS:
 			_add_windmill(container)
 			_add_grain_field(container)
@@ -444,71 +510,96 @@ func _add_windmill(container: Node3D) -> void:
 		hub.add_child(blade)
 
 
-## PASTURE — two procedural sheep, one grazing, one idling
-## Only the head animates for grazing — body stays stable so it never looks broken.
+## PASTURE — readable 3D sheep with idle/grazing motion.
 func _add_sheep_herd(container: Node3D) -> void:
-	var off1 := randf() * TAU
+	var pasture := Node3D.new()
+	pasture.position = Vector3(0, 0.125, 0)
+	container.add_child(pasture)
 
-	# Sheep 1 — grazing: head tilts down/up independently
-	var s1 := Node3D.new()
-	s1.position = Vector3(0.70, 0.125, 0.22)
-	s1.rotation_degrees.y = 40.0
-	container.add_child(s1)
-	var s1_head := _build_sheep(s1)
-	_anim_models.append({"node": s1_head, "type": "sheep_head_graze", "offset": off1})
-	_anim_models.append({"node": s1,      "type": "sheep_idle",        "offset": off1})
-
-	# Sheep 2 — just idle body sway
-	var s2 := Node3D.new()
-	s2.position = Vector3(-0.67, 0.125, 0.31)
-	s2.rotation_degrees.y = -75.0
-	container.add_child(s2)
-	_build_sheep(s2)
-	_anim_models.append({"node": s2, "type": "sheep_idle", "offset": randf() * TAU})
+	_add_pasture_fence(pasture)
+	_add_sheep_actor(pasture, Vector3(0.72, 0.0, -0.28), 1.18, 202.0, true)
+	_add_sheep_actor(pasture, Vector3(-0.78, 0.0, 0.34), 0.68, 18.0, false)
 
 
-## Clean minimal sheep: white oval body + black sphere head + dark legs.
-## No neck, no rotations, no scaling on head — just spheres and cylinders.
-func _build_sheep(parent: Node3D) -> Node3D:
-	var wool  := _solid_mat(Color(0.96, 0.95, 0.93), 0.92, 0.0)
-	var black := _solid_mat(Color(0.10, 0.08, 0.08), 0.90, 0.0)
+func _add_sheep_actor(container: Node3D, pos: Vector3, scale_f: float, rot_y: float, grazing: bool) -> void:
+	var actor := Node3D.new()
+	actor.position = pos
+	actor.rotation_degrees.y = rot_y
+	actor.scale = Vector3(scale_f, scale_f, scale_f)
+	container.add_child(actor)
 
-	# Large white body
-	var body := MeshInstance3D.new()
-	var bm   := SphereMesh.new()
-	bm.radius = 0.20; bm.radial_segments = 12
-	body.mesh = bm
-	body.scale    = Vector3(1.0, 0.85, 1.25)
-	body.position = Vector3(0, 0.22, 0)
-	body.material_override = wool
-	parent.add_child(body)
+	_add_sheep_shadow(actor)
+	var head_pivot := _add_sheep(actor)
 
-	# Small black round head — pure sphere, no rotation, placed at front of body
-	# body extends to z = -0.20*1.25 = -0.25 from centre; head sits right there
-	var head_root := Node3D.new()
-	head_root.position = Vector3(0, 0.26, -0.30)   # far enough that skull never clips into body
-	parent.add_child(head_root)
+	var idle_offset := randf() * TAU
+	_anim_models.append({
+		"node": actor,
+		"type": "sheep_idle",
+		"offset": idle_offset,
+		"base_y": actor.position.y,
+		"base_ry": actor.rotation_degrees.y,
+		"amp_y": 0.018 if grazing else 0.014,
+		"amp_roll": 2.0 if grazing else 2.4,
+	})
+	head_pivot.rotation_degrees.z = -18.0 if grazing else 8.0
+	_anim_models.append({
+		"node": head_pivot,
+		"type": "sheep_head_graze",
+		"offset": idle_offset + 0.7,
+		"base_z": -18.0 if grazing else 8.0,
+		"amp": 16.0 if grazing else 7.0,
+		"speed": 1.20 if grazing else 0.82,
+	})
 
-	var skull := MeshInstance3D.new()
-	var sm    := SphereMesh.new()
-	sm.radius = 0.048; sm.radial_segments = 10      # smaller, proportional to body
-	skull.mesh = sm
-	skull.position = Vector3(0, 0, -0.08)           # arc point for grazing animation
-	skull.material_override = black
-	head_root.add_child(skull)
 
-	# 4 dark legs
-	for lp: Vector3 in [Vector3( 0.10, 0,  0.13), Vector3(-0.10, 0,  0.13),
-	                     Vector3( 0.08, 0, -0.12), Vector3(-0.08, 0, -0.12)]:
-		var leg := MeshInstance3D.new()
-		var lm  := CylinderMesh.new()
-		lm.top_radius = 0.030; lm.bottom_radius = 0.026; lm.height = 0.18
-		leg.mesh = lm
-		leg.position = Vector3(lp.x, 0.09, lp.z)
-		leg.material_override = black
-		parent.add_child(leg)
+func _add_sheep_shadow(container: Node3D) -> void:
+	var shadow := MeshInstance3D.new()
+	var shadow_mesh := CylinderMesh.new()
+	shadow_mesh.top_radius = 0.20
+	shadow_mesh.bottom_radius = 0.28
+	shadow_mesh.height = 0.012
+	shadow_mesh.radial_segments = 18
+	shadow.mesh = shadow_mesh
+	shadow.position = Vector3(-0.02, 0.01, 0.05)
+	var shadow_mat := StandardMaterial3D.new()
+	shadow_mat.albedo_color = Color(0.0, 0.0, 0.0, 0.14)
+	shadow_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	shadow_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	shadow_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	shadow.material_override = shadow_mat
+	shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	container.add_child(shadow)
 
-	return head_root
+
+func _add_pasture_fence(container: Node3D) -> void:
+	var wood := _solid_mat(Color(0.54, 0.36, 0.18), 0.94, 0.0)
+	_add_fence_segment(container, Vector3(-0.16, 0.125, 0.80), 14.0, 0.68, wood)
+	_add_fence_segment(container, Vector3(-0.56, 0.125, 0.52), 78.0, 0.52, wood)
+
+
+func _add_fence_segment(container: Node3D, pos: Vector3, rot_y: float, span: float, wood: Material) -> void:
+	var fence_root := Node3D.new()
+	fence_root.position = pos
+	fence_root.rotation_degrees.y = rot_y
+	container.add_child(fence_root)
+
+	for x in [-span * 0.5, -span * 0.15, span * 0.15, span * 0.5]:
+		var post := MeshInstance3D.new()
+		var pm := BoxMesh.new()
+		pm.size = Vector3(0.04, 0.19, 0.04)
+		post.mesh = pm
+		post.position = Vector3(x, 0.095, 0)
+		post.material_override = wood
+		fence_root.add_child(post)
+
+	for y in [0.08, 0.145]:
+		var rail := MeshInstance3D.new()
+		var rm := BoxMesh.new()
+		rm.size = Vector3(span, 0.026, 0.03)
+		rail.mesh = rm
+		rail.position = Vector3(0, y, 0)
+		rail.material_override = wood
+		fence_root.add_child(rail)
 
 
 ## DESERT — flat-topped sandstone mesa + animated cactus
@@ -579,6 +670,16 @@ func _add_desert_scene(container: Node3D) -> void:
 	_anim_models.append({"node": cac, "type": "cactus_sway", "offset": randf() * TAU})
 
 
+func _add_forest_cluster(container: Node3D) -> void:
+	var grove := Node3D.new()
+	grove.position = Vector3(0, 0.125, 0)
+	container.add_child(grove)
+
+	_add_trees(grove)
+	_add_log_stack(grove)
+	_anim_models.append({"node": grove, "type": "tree", "offset": randf() * TAU})
+
+
 func _add_trees(container: Node3D) -> void:
 	var positions := [Vector3(0, 0, 0), Vector3(0.32, 0, 0.22), Vector3(-0.28, 0, 0.18)]
 	var heights   := [0.55, 0.42, 0.48]
@@ -600,8 +701,37 @@ func _add_trees(container: Node3D) -> void:
 		canopy.position = positions[i] + Vector3(0, 0.30 + heights[i] * 0.5, 0)
 		canopy.material_override = _solid_mat(Color(0.05, 0.28, 0.05), 0.92, 0)
 		container.add_child(canopy)
-		# Register for sway animation
-		pass  # canopy sway removed (terrain shaders handle all animation)
+
+
+func _add_log_stack(container: Node3D) -> void:
+	var bark := _solid_mat(Color(0.45, 0.28, 0.12), 0.93, 0.0)
+	var cut_face := _solid_mat(Color(0.76, 0.60, 0.34), 0.88, 0.0)
+	var anchor := Vector3(0.40, 0.12, -0.52)
+	for row in range(2):
+		for col in range(3 - row):
+			var log := MeshInstance3D.new()
+			var mesh := CylinderMesh.new()
+			mesh.top_radius = 0.07
+			mesh.bottom_radius = 0.07
+			mesh.height = 0.32
+			mesh.radial_segments = 10
+			log.mesh = mesh
+			log.rotation_degrees.z = 90.0
+			log.position = anchor + Vector3(col * 0.16 - row * 0.06, row * 0.09, 0)
+			log.material_override = bark
+			container.add_child(log)
+
+			var cap := MeshInstance3D.new()
+			var face := CylinderMesh.new()
+			face.top_radius = 0.072
+			face.bottom_radius = 0.072
+			face.height = 0.02
+			face.radial_segments = 10
+			cap.mesh = face
+			cap.position = log.position + Vector3(-0.16, 0.0, 0.0)
+			cap.rotation_degrees.z = 90.0
+			cap.material_override = cut_face
+			container.add_child(cap)
 
 
 func _add_mountain_peak(container: Node3D) -> void:
@@ -626,21 +756,121 @@ func _add_mountain_peak(container: Node3D) -> void:
 		container.add_child(snow)
 
 
+func _add_mountain_cluster(container: Node3D) -> void:
+	var massif := Node3D.new()
+	massif.position = Vector3(0, 0.125, 0)
+	container.add_child(massif)
+
+	_add_mountain_peak(massif)
+	_add_ore_cluster(massif)
+
+
+func _add_ore_cluster(container: Node3D) -> void:
+	var crystal_col := _solid_mat(Color(0.20, 0.42, 0.98), 0.22, 0.75)
+	var dark_rock := _solid_mat(Color(0.20, 0.23, 0.30), 0.85, 0.06)
+	var base_offsets := [Vector3(0.48, 0.12, -0.44), Vector3(0.62, 0.12, -0.30), Vector3(0.36, 0.12, -0.26)]
+	for i in base_offsets.size():
+		var crystal := MeshInstance3D.new()
+		var mesh := CylinderMesh.new()
+		mesh.top_radius = 0.02
+		mesh.bottom_radius = 0.10 - i * 0.01
+		mesh.height = 0.24 + i * 0.05
+		mesh.radial_segments = 5
+		crystal.mesh = mesh
+		crystal.position = base_offsets[i] + Vector3(0, mesh.height * 0.5, 0)
+		crystal.rotation_degrees = Vector3(randf_range(-6, 6), randf_range(0, 360), randf_range(-6, 6))
+		crystal.material_override = crystal_col
+		container.add_child(crystal)
+
+	var ore_base := MeshInstance3D.new()
+	var ore_mesh := CylinderMesh.new()
+	ore_mesh.top_radius = 0.18
+	ore_mesh.bottom_radius = 0.24
+	ore_mesh.height = 0.12
+	ore_mesh.radial_segments = 7
+	ore_base.mesh = ore_mesh
+	ore_base.position = Vector3(0.50, 0.18, -0.34)
+	ore_base.rotation_degrees.y = 18.0
+	ore_base.material_override = dark_rock
+	container.add_child(ore_base)
+
+
+func _add_hills_brick_scene(container: Node3D) -> void:
+	var kiln := Node3D.new()
+	kiln.position = Vector3(0, 0.125, 0)
+	container.add_child(kiln)
+
+	_add_clay_kiln(kiln)
+	_add_brick_pile(kiln)
+
+
+func _add_clay_kiln(container: Node3D) -> void:
+	var brick_mat := _solid_mat(Color(0.69, 0.27, 0.12), 0.95, 0.0)
+	var dark_brick := _solid_mat(Color(0.46, 0.16, 0.07), 0.96, 0.0)
+	var soot_mat := _solid_mat(Color(0.14, 0.08, 0.06), 0.96, 0.0)
+
+	var base := MeshInstance3D.new()
+	var base_mesh := BoxMesh.new()
+	base_mesh.size = Vector3(0.54, 0.22, 0.42)
+	base.mesh = base_mesh
+	base.position = Vector3(0.58, 0.17, 0.48)
+	base.rotation_degrees.y = -18.0
+	base.material_override = brick_mat
+	container.add_child(base)
+
+	var roof := MeshInstance3D.new()
+	var roof_mesh := BoxMesh.new()
+	roof_mesh.size = Vector3(0.60, 0.06, 0.48)
+	roof.mesh = roof_mesh
+	roof.position = Vector3(0.58, 0.32, 0.48)
+	roof.rotation_degrees.y = -18.0
+	roof.material_override = dark_brick
+	container.add_child(roof)
+
+	var chimney := MeshInstance3D.new()
+	var chimney_mesh := BoxMesh.new()
+	chimney_mesh.size = Vector3(0.12, 0.34, 0.12)
+	chimney.mesh = chimney_mesh
+	chimney.position = Vector3(0.76, 0.49, 0.36)
+	chimney.rotation_degrees.y = -18.0
+	chimney.material_override = dark_brick
+	container.add_child(chimney)
+
+	var arch := MeshInstance3D.new()
+	var arch_mesh := BoxMesh.new()
+	arch_mesh.size = Vector3(0.18, 0.12, 0.05)
+	arch.mesh = arch_mesh
+	arch.position = Vector3(0.44, 0.19, 0.27)
+	arch.rotation_degrees.y = -18.0
+	arch.material_override = soot_mat
+	container.add_child(arch)
+
+	for row_i in range(3):
+		var row := MeshInstance3D.new()
+		var row_mesh := BoxMesh.new()
+		row_mesh.size = Vector3(0.56 - row_i * 0.03, 0.018, 0.44)
+		row.mesh = row_mesh
+		row.position = Vector3(0.58, 0.08 + row_i * 0.07, 0.48)
+		row.rotation_degrees.y = -18.0
+		row.material_override = _solid_mat(Color(0.78, 0.35, 0.16), 0.95, 0.0)
+		container.add_child(row)
+
+
 ## Brick pile — stacked terracotta bricks in alternating rows
 func _add_brick_pile(container: Node3D) -> void:
-	var mat := _solid_mat(Color(0.72, 0.28, 0.12), 0.95, 0)
+	var mat := _solid_mat(Color(0.74, 0.29, 0.12), 0.95, 0)
 	var rows := [
-		[Vector3(-0.18, 0, 0), Vector3(-0.06, 0, 0), Vector3(0.06, 0, 0), Vector3(0.18, 0, 0)],
-		[Vector3(-0.12, 0, 0), Vector3(0.0, 0, 0), Vector3(0.12, 0, 0)],
-		[Vector3(-0.06, 0, 0), Vector3(0.08, 0, 0)],
+		[Vector3(-0.24, 0, 0), Vector3(-0.08, 0, 0), Vector3(0.08, 0, 0), Vector3(0.24, 0, 0)],
+		[Vector3(-0.16, 0, 0), Vector3(0.0, 0, 0), Vector3(0.16, 0, 0)],
+		[Vector3(-0.08, 0, 0), Vector3(0.10, 0, 0)],
 	]
 	for row_i in rows.size():
 		for pos in rows[row_i]:
 			var brick := MeshInstance3D.new()
 			var bm := BoxMesh.new()
-			bm.size = Vector3(0.13, 0.07, 0.09)
+			bm.size = Vector3(0.15, 0.08, 0.10)
 			brick.mesh = bm
-			brick.position = pos + Vector3(0, 0.16 + row_i * 0.078, 0.0)
+			brick.position = pos + Vector3(-0.54, 0.17 + row_i * 0.09, -0.52)
 			brick.rotation_degrees = Vector3(0, randf_range(-8, 8), 0)
 			brick.material_override = mat
 			container.add_child(brick)
@@ -672,39 +902,113 @@ func _add_wheat(container: Node3D) -> void:
 		container.add_child(head)
 
 
-## Fluffy sheep — Pasture/Wool resource
-func _add_sheep(container: Node3D) -> void:
-	var white := _solid_mat(Color(0.96, 0.96, 0.96), 0.95, 0)
-	var dark  := _solid_mat(Color(0.14, 0.11, 0.09), 0.9, 0)
+## Fluffy sheep — Pasture/Wool resource.
+## Built as exaggerated 3D forms so the sheep still read from the board camera.
+func _add_sheep(container: Node3D) -> Node3D:
+	var wool := _solid_mat(Color(0.97, 0.96, 0.94), 0.95, 0.0)
+	var wool_shadow := _solid_mat(Color(0.86, 0.84, 0.80), 0.96, 0.0)
+	var face := _solid_mat(Color(0.11, 0.09, 0.09), 0.93, 0.0)
+	var muzzle := _solid_mat(Color(0.54, 0.40, 0.36), 0.93, 0.0)
 
-	# Woolly body
 	var body := MeshInstance3D.new()
-	var bm := SphereMesh.new()
-	bm.radius = 0.22; bm.height = 0.32; bm.radial_segments = 10
-	body.mesh = bm
-	body.scale    = Vector3(1.15, 0.78, 1.35)
-	body.position = Vector3(0, 0.22, 0)
-	body.material_override = white
+	var body_mesh := SphereMesh.new()
+	body_mesh.radius = 0.18
+	body_mesh.height = 0.28
+	body_mesh.radial_segments = 12
+	body.mesh = body_mesh
+	body.scale = Vector3(1.72, 0.96, 1.10)
+	body.position = Vector3(-0.02, 0.25, 0.0)
+	body.material_override = wool_shadow
 	container.add_child(body)
 
-	# Head
-	var head := MeshInstance3D.new()
-	var hm := SphereMesh.new()
-	hm.radius = 0.10; hm.radial_segments = 8
-	head.mesh = hm
-	head.position = Vector3(0, 0.30, -0.24)
-	head.material_override = dark
-	container.add_child(head)
+	for puff_data in [
+		{"pos": Vector3(-0.20, 0.28, 0.0), "scale": Vector3(0.72, 0.64, 0.76)},
+		{"pos": Vector3(-0.02, 0.33, 0.12), "scale": Vector3(0.68, 0.60, 0.68)},
+		{"pos": Vector3(-0.02, 0.33, -0.12), "scale": Vector3(0.68, 0.60, 0.68)},
+		{"pos": Vector3(0.17, 0.30, 0.0), "scale": Vector3(0.66, 0.60, 0.64)},
+		{"pos": Vector3(0.03, 0.38, 0.0), "scale": Vector3(0.60, 0.54, 0.56)},
+	]:
+		var puff := MeshInstance3D.new()
+		var puff_mesh := SphereMesh.new()
+		puff_mesh.radius = 0.16
+		puff_mesh.height = 0.22
+		puff_mesh.radial_segments = 10
+		puff.mesh = puff_mesh
+		puff.position = puff_data.pos
+		puff.scale = puff_data.scale
+		puff.material_override = wool
+		container.add_child(puff)
 
-	# 4 stubby legs
-	for lp in [Vector3(0.10, 0, 0.12), Vector3(-0.10, 0, 0.12), Vector3(0.08, 0, -0.12), Vector3(-0.08, 0, -0.12)]:
+	var tail := MeshInstance3D.new()
+	var tail_mesh := SphereMesh.new()
+	tail_mesh.radius = 0.06
+	tail.mesh = tail_mesh
+	tail.scale = Vector3(0.85, 0.75, 0.85)
+	tail.position = Vector3(-0.38, 0.31, 0.0)
+	tail.material_override = wool
+	container.add_child(tail)
+
+	for leg_pos in [
+		Vector3(-0.18, 0.10, 0.10), Vector3(-0.18, 0.10, -0.10),
+		Vector3(0.11, 0.10, 0.11), Vector3(0.11, 0.10, -0.11),
+	]:
 		var leg := MeshInstance3D.new()
-		var lm := CylinderMesh.new()
-		lm.top_radius = 0.03; lm.bottom_radius = 0.03; lm.height = 0.14
-		leg.mesh = lm
-		leg.position = Vector3(0, 0.22, 0) + lp + Vector3(0, -0.18, 0)
-		leg.material_override = dark
+		var leg_mesh := CylinderMesh.new()
+		leg_mesh.top_radius = 0.024
+		leg_mesh.bottom_radius = 0.028
+		leg_mesh.height = 0.20
+		leg_mesh.radial_segments = 6
+		leg.mesh = leg_mesh
+		leg.position = leg_pos
+		leg.material_override = face
 		container.add_child(leg)
+
+	var head_pivot := Node3D.new()
+	head_pivot.position = Vector3(0.26, 0.28, 0.0)
+	container.add_child(head_pivot)
+
+	var neck := MeshInstance3D.new()
+	var neck_mesh := BoxMesh.new()
+	neck_mesh.size = Vector3(0.18, 0.11, 0.12)
+	neck.mesh = neck_mesh
+	neck.position = Vector3(-0.02, -0.02, 0.0)
+	neck.material_override = face
+	head_pivot.add_child(neck)
+
+	var head := MeshInstance3D.new()
+	var head_mesh := SphereMesh.new()
+	head_mesh.radius = 0.10
+	head_mesh.height = 0.17
+	head_mesh.radial_segments = 10
+	head.mesh = head_mesh
+	head.scale = Vector3(1.25, 0.94, 0.86)
+	head.position = Vector3(0.12, 0.0, 0.0)
+	head.material_override = face
+	head_pivot.add_child(head)
+
+	var muzzle_node := MeshInstance3D.new()
+	var muzzle_mesh := SphereMesh.new()
+	muzzle_mesh.radius = 0.055
+	muzzle_mesh.height = 0.10
+	muzzle_mesh.radial_segments = 8
+	muzzle_node.mesh = muzzle_mesh
+	muzzle_node.scale = Vector3(1.45, 0.78, 0.70)
+	muzzle_node.position = Vector3(0.24, -0.03, 0.0)
+	muzzle_node.material_override = muzzle
+	head_pivot.add_child(muzzle_node)
+
+	for ear_pos in [Vector3(0.10, 0.10, 0.07), Vector3(0.10, 0.10, -0.07)]:
+		var ear := MeshInstance3D.new()
+		var ear_mesh := BoxMesh.new()
+		ear_mesh.size = Vector3(0.05, 0.02, 0.08)
+		ear.mesh = ear_mesh
+		ear.position = ear_pos
+		ear.rotation_degrees.x = 18.0 if ear_pos.z > 0.0 else -18.0
+		ear.rotation_degrees.z = 22.0
+		ear.material_override = face
+		head_pivot.add_child(ear)
+
+	return head_pivot
 
 
 func _add_desert_rock(container: Node3D) -> void:

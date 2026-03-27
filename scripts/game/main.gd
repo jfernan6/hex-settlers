@@ -24,6 +24,7 @@ var _state: RefCounted
 var _hud:   CanvasLayer
 var _robber: Node3D   # hooded figure root (was MeshInstance3D sphere)
 var _god_panel: CanvasLayer  # God Mode overlay (F4 to toggle)
+var _camera: Camera3D
 
 var _vertex_slots: Array = []
 var _edge_slots:   Array = []
@@ -39,6 +40,7 @@ var _ai_turn_actions: int = 0
 # AI
 var _ai_timer: Timer     # fires after short delay to let frame render before AI acts
 const AI_DELAY := 0.5    # seconds between AI actions
+var _last_resource_payouts: Array = []
 
 # Animation
 var _time: float = 0.0
@@ -127,11 +129,22 @@ func _process(delta: float) -> void:
 			continue
 		match entry.type:
 			"sheep_head_graze":
-				# Nods head down to graze then back up
-				mdl.rotation_degrees.x = -25.0 + sin(_time * 1.1 + entry.offset) * 20.0
+				# Head dips forward and lifts back up while also looking around a little.
+				var base_z: float = float(entry.get("base_z", -18.0))
+				var amp: float = float(entry.get("amp", 16.0))
+				var speed: float = float(entry.get("speed", 1.1))
+				mdl.rotation_degrees.z = base_z + sin(_time * speed + entry.offset) * amp
+				mdl.rotation_degrees.y = sin(_time * speed * 0.45 + entry.offset * 1.2) * minf(4.0, amp * 0.18)
 			"sheep_idle", "sheep":
-				# Whole-body very gentle sway (breathing feel)
-				mdl.rotation_degrees.z = sin(_time * 0.45 + entry.offset) * 1.8
+				# Whole-body idle motion so the flock never feels frozen.
+				var base_y: float = float(entry.get("base_y", mdl.position.y))
+				var base_ry: float = float(entry.get("base_ry", mdl.rotation_degrees.y))
+				var amp_y: float = float(entry.get("amp_y", 0.02))
+				var amp_roll: float = float(entry.get("amp_roll", 1.8))
+				mdl.position.y = base_y + sin(_time * 0.78 + entry.offset) * amp_y
+				mdl.rotation_degrees.x = sin(_time * 0.54 + entry.offset * 1.3) * 1.2
+				mdl.rotation_degrees.z = sin(_time * 0.42 + entry.offset) * amp_roll
+				mdl.rotation_degrees.y = base_ry + sin(_time * 0.34 + entry.offset * 0.9) * 2.0
 			"tree":
 				# Gentle sway in the breeze
 				mdl.rotation_degrees.z = sin(_time * 0.85 + entry.offset) * 3.5
@@ -154,8 +167,15 @@ func _process(delta: float) -> void:
 		_state.phase == GameState.Phase.BUILD)
 	var pulse: float = 1.0 + sin(_time * 3.5) * 0.15
 	for slot in _vertex_slots:
-		if not slot.is_occupied:
+		if not slot.is_occupied and slot.is_emphasized:
 			slot.scale = Vector3(pulse, 1.0, pulse) if in_active_phase else Vector3.ONE
+		elif not slot.is_occupied:
+			slot.scale = Vector3.ONE
+	for slot in _edge_slots:
+		if not slot.is_occupied and slot.is_emphasized:
+			slot.scale = Vector3(1.0, 1.0, 1.0 + sin(_time * 3.2) * 0.12) if in_active_phase else Vector3.ONE
+		elif not slot.is_occupied:
+			slot.scale = Vector3.ONE
 
 	# Robber hover + slow spin
 	if _robber != null and is_instance_valid(_robber):
@@ -248,12 +268,12 @@ func _setup_lighting() -> void:
 
 
 func _setup_camera() -> void:
-	var camera := Camera3D.new()
-	camera.position = Vector3(0.0, 10.0, 9.0)  # zoomed out for larger board (1.40x scale)
-	camera.fov = 62.0                           # wider FOV for cinematic feel
-	add_child(camera)
-	camera.look_at(Vector3(0.0, 0.0, 0.5), Vector3.UP)
-	Log.info("[SETUP] Camera OK (fov=62, pos=%s)" % camera.position)
+	_camera = Camera3D.new()
+	_camera.position = Vector3(0.0, 10.0, 9.0)  # zoomed out for larger board (1.40x scale)
+	_camera.fov = 62.0                           # wider FOV for cinematic feel
+	add_child(_camera)
+	_camera.look_at(Vector3(0.0, 0.0, 0.5), Vector3.UP)
+	Log.info("[SETUP] Camera OK (fov=62, pos=%s)" % _camera.position)
 
 
 func _setup_game() -> void:
@@ -270,6 +290,7 @@ func _setup_game() -> void:
 	_state.robber_moved.connect(_on_robber_moved)
 	_state.bonuses_changed.connect(_refresh_hud)
 	_state.setup_sub_phase_changed.connect(_on_setup_sub_phase_changed)
+	_state.resource_payouts_generated.connect(_on_resource_payouts_generated)
 	Log.info("[SETUP] GameState OK  (AI players: %d)" % \
 		_state.players.filter(func(p): return p.is_ai).size())
 
@@ -510,6 +531,8 @@ func _gm_give_resource(res: int, amount: int) -> void:
 	else:
 		player.add_resource(res, amount)
 	_refresh_hud()
+	if res == PlayerData.RES_BRICK and amount > 0:
+		_play_brick_gain_feedback(amount, _brick_test_sources(amount), "[GOD] +%d Brick" % amount)
 	Log.info("[GOD] %s: %s %+d (now %d)" % [
 		player.player_name, PlayerData.RES_NAMES[res], amount, player.resources[res]])
 
@@ -529,7 +552,7 @@ func _gm_build_free(type: String) -> void:
 			else:
 				_hud.set_message("[GOD] No valid vertex for settlement")
 		"road":
-			var road_slot = AIPlayer.pick_road(_edge_slots, player, _state)
+			var road_slot = AIPlayer.pick_road(_edge_slots, _vertex_slots, player, _state)
 			if road_slot:
 				road_slot.occupy(player.color, pidx)
 				player.free_roads += 1  # give one free road
@@ -591,6 +614,7 @@ func _refresh_hud() -> void:
 	if _hud == null or _state.players.is_empty():
 		return
 	_hud.refresh(_state.current_player(), _state.phase_name(), _state.last_roll, _state)
+	_refresh_board_affordances()
 	match _state.phase:
 		GameState.Phase.SETUP:
 			var p = _state.current_player()
@@ -618,6 +642,99 @@ func _refresh_hud() -> void:
 		GameState.Phase.GAME_OVER:
 			var w = _state.players[_state.winner_index]
 			_hud.set_message("*** %s WINS with %d VP! ***" % [w.player_name, w.victory_points])
+
+
+func _refresh_board_affordances() -> void:
+	var player = _state.current_player()
+	var pidx: int = _state.current_player_index
+	var is_human_turn: bool = not player.is_ai
+	var in_setup_settlement: bool = (
+		_state.phase == GameState.Phase.SETUP and
+		_state.setup_sub_phase == GameState.SetupSubPhase.PLACE_SETTLEMENT and
+		is_human_turn
+	)
+	var in_setup_road: bool = (
+		_state.phase == GameState.Phase.SETUP and
+		_state.setup_sub_phase == GameState.SetupSubPhase.PLACE_ROAD and
+		is_human_turn
+	)
+	var in_build: bool = (_state.phase == GameState.Phase.BUILD and is_human_turn)
+	var can_afford_road: bool = (
+		player.free_roads > 0 or
+		(player.resources.get(PlayerData.RES_LUMBER, 0) >= 1 and
+		player.resources.get(PlayerData.RES_BRICK, 0) >= 1)
+	)
+	var can_afford_city: bool = (
+		player.resources.get(PlayerData.RES_GRAIN, 0) >= 2 and
+		player.resources.get(PlayerData.RES_ORE, 0) >= 3 and
+		player.city_positions.size() < _state.MAX_CITIES
+	)
+
+	for slot in _vertex_slots:
+		if slot.is_occupied:
+			var can_upgrade: bool = (
+				in_build and
+				slot.owner_index == pidx and
+				not slot.is_city and
+				can_afford_city
+			)
+			slot.input_ray_pickable = can_upgrade
+			if can_upgrade:
+				slot.set_affordance("upgrade", player.color)
+			elif slot.owner_index == pidx:
+				slot.set_affordance("owned", player.color)
+			else:
+				slot.set_affordance("neutral")
+			continue
+
+		if in_setup_settlement:
+			var legal_setup_vertex: bool = _state._respects_distance_rule(slot.position)
+			slot.input_ray_pickable = legal_setup_vertex
+			slot.set_affordance("legal" if legal_setup_vertex else "blocked", player.color)
+			continue
+
+		if in_build:
+			var legal_build_vertex: bool = (
+				player.can_build_settlement() and
+				_state._respects_distance_rule(slot.position) and
+				_state._has_connected_road_for_settlement(player, slot.position)
+			)
+			slot.input_ray_pickable = legal_build_vertex
+			slot.set_affordance("legal" if legal_build_vertex else "neutral", player.color)
+			continue
+
+		slot.input_ray_pickable = false
+		slot.set_affordance("neutral")
+
+	for slot in _edge_slots:
+		if slot.is_occupied:
+			slot.input_ray_pickable = false
+			if slot.owner_index == pidx:
+				slot.set_affordance("owned", player.color)
+			else:
+				slot.set_affordance("neutral")
+			continue
+
+		if in_setup_road:
+			var legal_setup_road: bool = _state._road_is_connected(player, pidx, slot.v1, slot.v2)
+			slot.input_ray_pickable = legal_setup_road
+			slot.set_affordance("legal" if legal_setup_road else "neutral")
+			continue
+
+		if in_build:
+			var connected_road: bool = _state._road_is_connected(player, pidx, slot.v1, slot.v2)
+			var legal_build_road: bool = connected_road and can_afford_road
+			slot.input_ray_pickable = legal_build_road
+			if legal_build_road:
+				slot.set_affordance("legal")
+			elif connected_road:
+				slot.set_affordance("candidate")
+			else:
+				slot.set_affordance("neutral")
+			continue
+
+		slot.input_ray_pickable = false
+		slot.set_affordance("neutral")
 
 
 # ---------------------------------------------------------------
@@ -847,6 +964,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_roll_dice() -> void:
 	if _state.phase != GameState.Phase.ROLL:
 		return
+	var roller = _state.current_player()
+	_last_resource_payouts = []
 	# God mode: override with forced roll if set
 	if _god_forced_roll > 0:
 		_state.last_roll = _god_forced_roll
@@ -860,12 +979,27 @@ func _on_roll_dice() -> void:
 		_state.dice_rolled.emit(_god_forced_roll)
 	else:
 		_state.roll_dice()
+	var gains: Dictionary = _display_player_gain_delta(_last_resource_payouts)
 	# Sprint 1B: dice animation (only for human — AI rolls too fast to animate)
-	if not _state.current_player().is_ai:
+	if not roller.is_ai:
 		_hud.show_dice_animation(_state.last_roll)
+	_hud.show_roll_feedback(
+		roller.player_name,
+		_state.last_roll,
+		gains,
+		_state.phase == GameState.Phase.ROBBER_MOVE
+	)
 	if _state.phase == GameState.Phase.ROBBER_MOVE:
 		_set_tile_picking(true)
 	_refresh_hud()
+	var brick_gain: int = gains.get(PlayerData.RES_BRICK, 0)
+	if brick_gain > 0:
+		_schedule_brick_gain_feedback(
+			brick_gain,
+			_brick_sources_for_display_player(_last_resource_payouts),
+			"+%d Brick" % brick_gain,
+			not roller.is_ai
+		)
 
 
 func _on_end_turn() -> void:
@@ -1092,6 +1226,94 @@ func _ai_evaluate_trade(ai_player, offer: Dictionary, want: Dictionary) -> bool:
 
 func _on_dice_rolled(_roll: int) -> void:
 	_refresh_hud()
+
+
+func _resource_gain_delta(before: Dictionary, after: Dictionary) -> Dictionary:
+	var delta: Dictionary = {}
+	for res in [0, 1, 2, 3, 4]:
+		var gained: int = after.get(res, 0) - before.get(res, 0)
+		if gained > 0:
+			delta[res] = gained
+	return delta
+
+
+func _play_brick_gain_feedback(amount: int, source_world_points: Array, caption: String) -> void:
+	if _hud == null or amount <= 0:
+		return
+	var source_points: Array = []
+	for world_point in source_world_points:
+		source_points.append(_project_world_to_screen(world_point))
+	_hud.show_resource_chip_flight(PlayerData.RES_BRICK, source_points, amount, caption)
+
+
+func _schedule_brick_gain_feedback(amount: int, source_world_points: Array, caption: String, show_dice_anim: bool) -> void:
+	if _hud == null or amount <= 0:
+		return
+	var delay: float = _hud.get_roll_feedback_delay(show_dice_anim)
+	var timer := get_tree().create_timer(delay)
+	timer.timeout.connect(func() -> void:
+		_play_brick_gain_feedback(amount, source_world_points, caption)
+	)
+
+
+func _brick_sources_for_display_player(payouts: Array) -> Array:
+	var sources: Array = []
+	var target_player_index: int = _display_player_index()
+	for payout in payouts:
+		if payout.player_index != target_player_index:
+			continue
+		if payout.resource != PlayerData.RES_BRICK:
+			continue
+		for _i in range(int(payout.amount)):
+			sources.append(payout.center + Vector3(0, 0.34, 0))
+	if sources.is_empty():
+		return _brick_test_sources(1)
+	return sources
+
+
+func _brick_test_sources(amount: int) -> Array:
+	var hills: Array = []
+	for key in _state.tile_data:
+		var tile: Dictionary = _state.tile_data[key]
+		if tile.terrain == BoardGenerator.TerrainType.HILLS:
+			hills.append(tile.center + Vector3(0, 0.34, 0))
+	if hills.is_empty():
+		return [Vector3.ZERO]
+	var sources: Array = []
+	for i in range(maxi(1, amount)):
+		sources.append(hills[i % hills.size()])
+	return sources
+
+
+func _project_world_to_screen(world_pos: Vector3) -> Vector2:
+	var camera: Camera3D = _camera if _camera != null else get_viewport().get_camera_3d()
+	if camera == null:
+		return get_viewport().get_visible_rect().size * 0.5
+	if camera.is_position_behind(world_pos):
+		return get_viewport().get_visible_rect().size * 0.5
+	return camera.unproject_position(world_pos)
+
+
+func _display_player_index() -> int:
+	for i in range(_state.players.size()):
+		if not _state.players[i].is_ai:
+			return i
+	return _state.current_player_index
+
+
+func _display_player_gain_delta(payouts: Array) -> Dictionary:
+	var delta: Dictionary = {}
+	var target_player_index: int = _display_player_index()
+	for payout in payouts:
+		if payout.player_index != target_player_index:
+			continue
+		var res: int = int(payout.resource)
+		delta[res] = delta.get(res, 0) + int(payout.amount)
+	return delta
+
+
+func _on_resource_payouts_generated(payouts: Array) -> void:
+	_last_resource_payouts = payouts.duplicate(true)
 
 
 func _on_game_won(_winner: Object) -> void:
