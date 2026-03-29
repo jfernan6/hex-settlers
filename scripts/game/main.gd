@@ -16,6 +16,7 @@ const GamePhaseMessaging = preload("res://scripts/game/game_phase_messaging.gd")
 const GodModePanel      = preload("res://scripts/ui/god_mode_panel.gd")
 const ResourceFeedbackController = preload("res://scripts/game/resource_feedback_controller.gd")
 const GodModeController = preload("res://scripts/game/god_mode_controller.gd")
+const BoardFramingController = preload("res://scripts/game/board_framing_controller.gd")
 
 var _state: RefCounted
 var _hud:   CanvasLayer
@@ -36,6 +37,8 @@ var _actions := GameplayActionController.new()
 var _resource_feedback := ResourceFeedbackController.new()
 var _god_mode := GodModeController.new()
 var _phase_messaging := GamePhaseMessaging.new()
+var _board_framing := BoardFramingController.new()
+var _camera_framing_queued: bool = false
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -61,6 +64,8 @@ func _ready() -> void:
 	_create_hud()
 	_create_god_panel()
 	_refresh_hud()
+	get_viewport().size_changed.connect(_schedule_camera_framing)
+	_schedule_camera_framing()
 	Log.info("=== [DONE] Scene ready — children: %d ===" % get_child_count())
 
 	if "--debug-screenshot" in args:
@@ -182,6 +187,7 @@ func _setup_camera() -> void:
 	_camera = Camera3D.new()
 	_camera.position = Vector3(0.0, 10.0, 9.0)  # zoomed out for larger board (1.40x scale)
 	_camera.fov = 62.0                           # wider FOV for cinematic feel
+	_camera.current = true
 	add_child(_camera)
 	_camera.look_at(Vector3(0.0, 0.0, 0.5), Vector3.UP)
 	Log.info("[SETUP] Camera OK (fov=62, pos=%s)" % _camera.position)
@@ -209,6 +215,7 @@ func _setup_game() -> void:
 		"queue_ai_followup": Callable(self, "_queue_ai_followup"),
 		"forced_roll_provider": Callable(_god_mode, "forced_roll"),
 	})
+	_board_framing.setup(_camera, _state)
 	Log.info("[SETUP] GameState OK  (AI players: %d)" % \
 		_state.players.filter(func(p): return p.is_ai).size())
 
@@ -250,6 +257,7 @@ func _generate_board() -> void:
 	_edge_slots = _board_presenter.get_edge_slots()
 	_state.init_robber()
 	_board_presenter.create_robber()
+	_board_framing.refresh_board_samples()
 	_resource_feedback.update_bindings(_hud, _board_presenter)
 	_actions.update_bindings(_hud, _board_presenter)
 	_god_mode.update_bindings(_hud, _god_panel, _vertex_slots, _edge_slots)
@@ -328,6 +336,7 @@ func _create_hud() -> void:
 	_hud.trade_proposed.connect(_on_trade_proposed)
 	_hud.robber_victim_chosen.connect(_on_robber_victim_chosen)
 	_hud.robber_card_chosen.connect(_on_robber_card_chosen)
+	_hud.layout_metrics_changed.connect(_on_hud_layout_metrics_changed)
 	add_child(_hud)
 	_resource_feedback.update_bindings(_hud, _board_presenter)
 	_actions.update_bindings(_hud, _board_presenter)
@@ -384,6 +393,7 @@ func _refresh_hud() -> void:
 	_hud.refresh(_state.current_player(), _state.phase_name(), _state.last_roll, _state)
 	_refresh_board_affordances()
 	_hud.set_phase_prompt(_phase_messaging.hud_message_for(_state))
+	_schedule_camera_framing()
 
 
 func _refresh_board_affordances() -> void:
@@ -516,6 +526,10 @@ func _on_robber_moved(_key: String) -> void:
 	_refresh_hud()
 
 
+func _on_hud_layout_metrics_changed(_insets: Dictionary) -> void:
+	_schedule_camera_framing()
+
+
 # ---------------------------------------------------------------
 # God mode (F1/F2/F3 during normal play)
 # ---------------------------------------------------------------
@@ -530,6 +544,29 @@ func _god_cycle_forced_roll() -> void:
 
 func _god_instant_win() -> void:
 	_god_mode.instant_win()
+
+
+func _schedule_camera_framing() -> void:
+	if _camera_framing_queued:
+		return
+	_camera_framing_queued = true
+	call_deferred("_apply_camera_framing")
+
+
+func _apply_camera_framing() -> void:
+	_camera_framing_queued = false
+	if _camera == null or _state == null or _state.tile_data.is_empty():
+		return
+	var safe_insets := {
+		"left": 0.0,
+		"top": 0.0,
+		"right": 0.0,
+		"bottom": 0.0,
+	}
+	if _hud != null and _hud.has_method("get_persistent_safe_insets"):
+		safe_insets = _hud.get_persistent_safe_insets()
+	_board_framing.refresh_board_samples()
+	_board_framing.apply_framing(safe_insets)
 
 
 # ---------------------------------------------------------------

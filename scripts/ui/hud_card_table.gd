@@ -11,6 +11,7 @@ signal end_turn_pressed
 signal buy_dev_card_pressed
 signal propose_trade_pressed
 signal play_dev_card_requested(card_type: int)
+signal layout_metrics_changed(insets: Dictionary)
 
 const _RESOURCE_ORDER := [
 	PlayerData.RES_LUMBER,
@@ -91,6 +92,12 @@ var _last_state = null
 var _last_turn_index: int = -1
 var _last_phase_name: String = ""
 var _last_activity_entries: Array = []
+var _persistent_safe_insets := {
+	"left": 0.0,
+	"top": 0.0,
+	"right": 0.0,
+	"bottom": 0.0,
+}
 
 
 func setup(font_size: int) -> void:
@@ -105,6 +112,10 @@ func setup(font_size: int) -> void:
 func set_ai_face_up(face_up: bool) -> void:
 	_opponents_face_up = face_up
 	_refresh_inspect_overlay()
+
+
+func get_persistent_safe_insets() -> Dictionary:
+	return _persistent_safe_insets.duplicate(true)
 
 
 func refresh(state, turn_player, phase_name: String, dice_roll: int, phase_ui: Dictionary,
@@ -212,7 +223,7 @@ func _layout_panels() -> void:
 	var show_status_strip := false
 	if _last_state != null and _local_player_index >= 0:
 		show_status_strip = _show_ribbon_status_strip(_last_phase_name, _last_state.get_player(_local_player_index))
-	var ribbon_height := 90.0 if show_status_strip else 64.0
+	var ribbon_height := 84.0 if show_status_strip else 56.0
 	_ribbon_panel.position = Vector2(ribbon_left, vp.y - ribbon_height - 12.0)
 	_ribbon_panel.size = Vector2(maxf(680.0, vp.x - ribbon_left - ribbon_right), ribbon_height)
 
@@ -233,6 +244,7 @@ func _layout_panels() -> void:
 	var table_height := clampf(vp.y * 0.52, 360.0, 520.0)
 	_table_panel.position = Vector2(vp.x - table_width - 18.0, 84.0)
 	_table_panel.size = Vector2(table_width, table_height)
+	_update_layout_metrics(vp)
 
 
 func _build_utility_bar() -> void:
@@ -262,15 +274,15 @@ func _build_utility_bar() -> void:
 
 
 func _build_ribbon() -> void:
-	var margin := _margin(10)
+	var margin := _margin(8)
 	_ribbon_panel.add_child(margin)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 6)
+	vb.add_theme_constant_override("separation", 4)
 	margin.add_child(vb)
 
 	var top := HBoxContainer.new()
-	top.add_theme_constant_override("separation", 10)
+	top.add_theme_constant_override("separation", 8)
 	vb.add_child(top)
 
 	var local_box := VBoxContainer.new()
@@ -762,6 +774,29 @@ func _resource_total(player) -> int:
 	for resource in _RESOURCE_ORDER:
 		total += int(player.resources.get(resource, 0))
 	return total
+
+
+func _update_layout_metrics(vp: Vector2) -> void:
+	var next_insets := {
+		"left": clampf(_player_rail.position.x + _player_rail.size.x + 18.0, 0.0, vp.x * 0.42),
+		"top": clampf(_utility_bar.position.y + _utility_bar.size.y + 16.0, 0.0, vp.y * 0.24),
+		"right": 20.0,
+		"bottom": clampf(vp.y - _ribbon_panel.position.y + 24.0, 0.0, vp.y * 0.44),
+	}
+	if _layout_metrics_match(next_insets, _persistent_safe_insets):
+		_persistent_safe_insets = next_insets
+		return
+	_persistent_safe_insets = next_insets
+	layout_metrics_changed.emit(get_persistent_safe_insets())
+
+
+func _layout_metrics_match(a: Dictionary, b: Dictionary) -> bool:
+	return (
+		absf(float(a.get("left", 0.0)) - float(b.get("left", 0.0))) < 0.5 and
+		absf(float(a.get("top", 0.0)) - float(b.get("top", 0.0))) < 0.5 and
+		absf(float(a.get("right", 0.0)) - float(b.get("right", 0.0))) < 0.5 and
+		absf(float(a.get("bottom", 0.0)) - float(b.get("bottom", 0.0))) < 0.5
+	)
 
 
 func _inspect_height_for_player(player) -> float:

@@ -18,6 +18,7 @@ signal monopoly_chosen(res: int)
 signal trade_proposed(offer: Dictionary, want: Dictionary, to_player_idx: int)
 signal robber_victim_chosen(victim_idx: int)
 signal robber_card_chosen(victim_idx: int, resource: int)
+signal layout_metrics_changed(insets: Dictionary)
 
 const _ACTIVITY_LIMIT := 4
 
@@ -62,6 +63,9 @@ func _build_ui() -> void:
 	print("[HUD] vp=%s  hand-font=%d" % [vp, _font_size])
 
 	_card_table = HUDCardTable.new()
+	_card_table.layout_metrics_changed.connect(func(insets: Dictionary) -> void:
+		layout_metrics_changed.emit(insets)
+	)
 	_card_table.setup(_font_size)
 	_card_table.roll_dice_pressed.connect(func() -> void:
 		roll_dice_pressed.emit()
@@ -135,6 +139,17 @@ func get_resource_card_center(res: int) -> Vector2:
 	if _card_table != null and _card_table.has_method("get_resource_target_center"):
 		return _card_table.get_resource_target_center(res)
 	return get_viewport().get_visible_rect().size * 0.5
+
+
+func get_persistent_safe_insets() -> Dictionary:
+	if _card_table != null and _card_table.has_method("get_persistent_safe_insets"):
+		return _card_table.get_persistent_safe_insets()
+	return {
+		"left": 0.0,
+		"top": 0.0,
+		"right": 0.0,
+		"bottom": 0.0,
+	}
 
 
 func pulse_resource_card(res: int) -> void:
