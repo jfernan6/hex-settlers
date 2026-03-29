@@ -55,6 +55,8 @@ func _test_knight_play() -> void:
 	_runner.assert_eq(player.knight_count, before_count + 1, "knight_count increments")
 	_runner.assert_false(DevCards.Type.KNIGHT in player.dev_cards,
 		"Knight removed from hand after playing")
+	_runner.assert_true(DevCards.Type.KNIGHT in player.revealed_dev_cards,
+		"Knight is added to the revealed dev-card history after being played")
 	_runner.assert_eq(state.phase, GameState.Phase.ROBBER_MOVE,
 		"Phase becomes ROBBER_MOVE after Knight")
 
@@ -76,5 +78,7 @@ func _test_vp_card_instant() -> void:
 		"VP card gives +1 VP immediately")
 	_runner.assert_eq(player.dev_cards.size(), 0,
 		"VP card is NOT added to hand (consumed immediately)")
+	_runner.assert_true(DevCards.Type.VP in player.revealed_dev_cards,
+		"VP card is tracked in the revealed dev-card history")
 	_runner.assert_true(state.dev_deck.is_empty(),
 		"Deck empty after drawing last card")

@@ -1,6 +1,7 @@
 extends RefCounted
 
 const GameState  = preload("res://scripts/game/game_state.gd")
+const DevCards   = preload("res://scripts/game/dev_cards.gd")
 const PlayerData = preload("res://scripts/player/player.gd")
 const HexGrid    = preload("res://scripts/board/hex_grid.gd")
 const BoardGen   = preload("res://scripts/board/board_generator.gd")
@@ -17,6 +18,12 @@ func run() -> void:
 	_test_win_ends_turn_early()
 	_test_win_above_10_still_triggers()
 	_test_robber_discard()
+	_test_resource_bank_starts_full()
+	_test_resource_collection_draws_from_bank()
+	_test_resource_collection_skips_when_bank_cannot_cover_type()
+	_test_dev_purchase_returns_cost_to_bank()
+	_test_year_of_plenty_fails_when_bank_is_short()
+	_test_dev_supply_view_tracks_remaining_and_revealed_cards()
 	_test_bank_trade()
 	_test_piece_limits()
 	_test_settlement_requires_connected_road()
@@ -28,6 +35,7 @@ func run() -> void:
 	_test_longest_road_transfer()
 	_test_largest_army_transfer()
 	_test_resource_collection()
+	_test_resource_payout_signal_tracks_exact_sources()
 	_test_port_generic_rate()
 	_test_port_specific_rate()
 	_test_port_no_rate_without_settlement()
@@ -35,8 +43,13 @@ func run() -> void:
 	_test_dev_card_timing_cannot_play_bought_same_turn()
 	_test_player_trade_executes()
 	_test_player_trade_rejects_when_insufficient()
+	_test_get_robber_victims_returns_adjacent_opponents()
+	_test_get_hand_cards_expands_resource_counts()
+	_test_steal_specific_resource_transfers_exact_card()
 	_test_move_robber_rejects_invalid_tile()
 	_test_move_robber_rejects_same_tile()
+	_test_scenario_setup_roll_robber_build_end_turn()
+	_test_scenario_bonus_transfer_flow()
 
 
 # ---------------------------------------------------------------
@@ -74,21 +87,21 @@ func _test_distance_rule() -> void:
 
 	# Adjacent vertex (distance ≈ HEX_SIZE ≈ 1.05) → must be blocked
 	var adj_pos := Vector3(HexGrid.HEX_SIZE, 0.15, 0)
-	_runner.assert_false(state._respects_distance_rule(adj_pos),
+	_runner.assert_false(state.passes_distance_rule(adj_pos),
 		"Distance rule: adjacent vertex (dist=HEX_SIZE) blocked")
 
 	# Same position → blocked
-	_runner.assert_false(state._respects_distance_rule(Vector3(0, 0.15, 0)),
+	_runner.assert_false(state.passes_distance_rule(Vector3(0, 0.15, 0)),
 		"Distance rule: same position blocked")
 
 	# Vertex 2 edges away (dist ≈ 2.1) → allowed
 	var far_pos := Vector3(HexGrid.HEX_SIZE * 2.0, 0.15, 0)
-	_runner.assert_true(state._respects_distance_rule(far_pos),
+	_runner.assert_true(state.passes_distance_rule(far_pos),
 		"Distance rule: vertex 2 edges away (dist≈2.1) allowed")
 
 	# Fresh state with no settlements → always true
 	var empty := _make_state()
-	_runner.assert_true(empty._respects_distance_rule(Vector3(0, 0.15, 0)),
+	_runner.assert_true(empty.passes_distance_rule(Vector3(0, 0.15, 0)),
 		"Distance rule: empty board always passes")
 
 
@@ -97,13 +110,13 @@ func _test_win_condition() -> void:
 	var p: RefCounted = state.players[0]
 
 	p.victory_points = 9
-	state._check_win()
+	state.check_win()
 	_runner.assert_false(state.phase == GameState.Phase.GAME_OVER,
 		"9 VP does not trigger GAME_OVER")
 	_runner.assert_eq(state.winner_index, -1, "winner_index stays -1 at 9 VP")
 
 	p.victory_points = 10
-	state._check_win()
+	state.check_win()
 	_runner.assert_eq(state.phase, GameState.Phase.GAME_OVER,
 		"10 VP triggers GAME_OVER")
 	_runner.assert_eq(state.winner_index, 0, "winner_index set to 0 at 10 VP")
@@ -117,7 +130,7 @@ func _test_win_from_longest_road() -> void:
 
 	# Simulate Longest Road gain (+2 VP) → should hit exactly 10
 	p.victory_points += 2
-	state._check_win()
+	state.check_win()
 	_runner.assert_eq(state.phase, GameState.Phase.GAME_OVER,
 		"Longest Road bonus pushing VP to 10 triggers GAME_OVER")
 	_runner.assert_eq(state.winner_index, 0,
@@ -130,7 +143,7 @@ func _test_win_from_largest_army() -> void:
 	var p: RefCounted = state.players[0]
 	p.victory_points = 8
 	p.victory_points += 2   # Largest Army bonus
-	state._check_win()
+	state.check_win()
 	_runner.assert_eq(state.phase, GameState.Phase.GAME_OVER,
 		"Largest Army bonus pushing VP to 10 triggers GAME_OVER")
 
@@ -140,7 +153,7 @@ func _test_win_correct_player() -> void:
 	var state := _make_state()
 	state.players[0].victory_points = 9
 	state.players[1].victory_points = 10
-	state._check_win()
+	state.check_win()
 	_runner.assert_eq(state.phase, GameState.Phase.GAME_OVER,
 		"10 VP on player 1 triggers GAME_OVER")
 	_runner.assert_eq(state.winner_index, 1,
@@ -153,7 +166,7 @@ func _test_win_ends_turn_early() -> void:
 	state.init_setup()
 	# Force directly into a won state
 	state.players[0].victory_points = 10
-	state._check_win()
+	state.check_win()
 	_runner.assert_eq(state.phase, GameState.Phase.GAME_OVER,
 		"Setup for end_turn early-return test: GAME_OVER set")
 	state.end_turn()   # must not crash or change phase
@@ -167,7 +180,7 @@ func _test_win_ends_turn_early() -> void:
 func _test_win_above_10_still_triggers() -> void:
 	var state := _make_state()
 	state.players[0].victory_points = 12   # e.g. 10 + Longest Road + extra
-	state._check_win()
+	state.check_win()
 	_runner.assert_eq(state.phase, GameState.Phase.GAME_OVER,
 		"12 VP still triggers GAME_OVER (>= WIN_VP check)")
 	_runner.assert_eq(state.winner_index, 0,
@@ -237,14 +250,14 @@ func _test_robber_discard() -> void:
 
 	# 7 cards — no discard
 	p.resources = {0: 2, 1: 2, 2: 1, 3: 1, 4: 1}  # sum = 7
-	state._apply_robber_discard()
+	state.apply_robber_discard()
 	var total_after: int = 0
 	for r in p.resources: total_after += p.resources[r]
 	_runner.assert_eq(total_after, 7, "7 cards: no discard (7 < 8 threshold)")
 
 	# 8 cards → discard 4
 	p.resources = {0: 2, 1: 2, 2: 2, 3: 1, 4: 1}  # sum = 8
-	state._apply_robber_discard()
+	state.apply_robber_discard()
 	total_after = 0
 	for r in p.resources: total_after += p.resources[r]
 	_runner.assert_eq(total_after, 4, "8 cards: discard 4, keep 4")
@@ -252,10 +265,98 @@ func _test_robber_discard() -> void:
 	# 9 cards → discard 4 (floor(9/2) = 4)
 	var p2: RefCounted = state.players[1]
 	p2.resources = {0: 2, 1: 2, 2: 2, 3: 2, 4: 1}  # sum = 9
-	state._apply_robber_discard()
+	state.apply_robber_discard()
 	total_after = 0
 	for r in p2.resources: total_after += p2.resources[r]
 	_runner.assert_eq(total_after, 5, "9 cards: discard 4, keep 5 (floor(9/2)=4)")
+
+
+func _test_resource_bank_starts_full() -> void:
+	var state := _make_state()
+	var bank: Dictionary = state.get_resource_bank_view()
+	for resource in [PlayerData.RES_LUMBER, PlayerData.RES_BRICK, PlayerData.RES_WOOL, PlayerData.RES_GRAIN, PlayerData.RES_ORE]:
+		_runner.assert_eq(bank.get(resource, 0), 19,
+			"Resource bank starts with 19 cards for %s" % PlayerData.RES_NAMES[resource])
+
+
+func _test_resource_collection_draws_from_bank() -> void:
+	var state := _make_state_with_tile(0, 0, BoardGen.TerrainType.FOREST, 6)
+	var player: RefCounted = state.players[0]
+	player.settlement_positions.append(state.tile_data["0,0"].center + Vector3(0.0, 0.15, 0.0))
+
+	state.collect_resources_for_roll(6)
+
+	_runner.assert_eq(player.resources[PlayerData.RES_LUMBER], 1,
+		"Matching roll adds one lumber to the adjacent settlement owner")
+	_runner.assert_eq(state.get_resource_bank_view()[PlayerData.RES_LUMBER], 18,
+		"Paid production removes the resource from the bank")
+
+
+func _test_resource_collection_skips_when_bank_cannot_cover_type() -> void:
+	var state := _make_state_with_tile(0, 0, BoardGen.TerrainType.HILLS, 8)
+	var center: Vector3 = state.tile_data["0,0"].center
+	var player: RefCounted = state.players[0]
+	player.settlement_positions.append(center + Vector3(0.0, 0.15, 0.0))
+	player.city_positions.append(center + Vector3(0.0, 0.15, 0.0))
+	state.resource_bank[PlayerData.RES_BRICK] = 1
+
+	state.collect_resources_for_roll(8)
+
+	_runner.assert_eq(player.resources[PlayerData.RES_BRICK], 0,
+		"When the bank cannot cover a resource type, no payout of that type is made")
+	_runner.assert_eq(state.get_resource_bank_view()[PlayerData.RES_BRICK], 1,
+		"Skipped payouts do not partially drain the bank")
+
+
+func _test_dev_purchase_returns_cost_to_bank() -> void:
+	var state := _make_state()
+	state.phase = GameState.Phase.BUILD
+	state.dev_deck = [DevCards.Type.KNIGHT]
+	state.debug_adjust_resource(0, PlayerData.RES_WOOL, 1)
+	state.debug_adjust_resource(0, PlayerData.RES_GRAIN, 1)
+	state.debug_adjust_resource(0, PlayerData.RES_ORE, 1)
+
+	var bought: bool = state.buy_dev_card(state.players[0])
+	var bank: Dictionary = state.get_resource_bank_view()
+
+	_runner.assert_true(bought, "Buying a dev card succeeds with the exact cost in hand")
+	_runner.assert_eq(bank[PlayerData.RES_WOOL], 19,
+		"Dev purchase returns spent Wool to the bank")
+	_runner.assert_eq(bank[PlayerData.RES_GRAIN], 19,
+		"Dev purchase returns spent Grain to the bank")
+	_runner.assert_eq(bank[PlayerData.RES_ORE], 19,
+		"Dev purchase returns spent Ore to the bank")
+
+
+func _test_year_of_plenty_fails_when_bank_is_short() -> void:
+	var state := _make_state()
+	var player: RefCounted = state.players[0]
+	player.dev_cards.append(DevCards.Type.YEAR_OF_PLENTY)
+	state.phase = GameState.Phase.BUILD
+	state.resource_bank[PlayerData.RES_ORE] = 1
+
+	var played: bool = state.play_year_of_plenty(player, PlayerData.RES_ORE, PlayerData.RES_ORE)
+
+	_runner.assert_false(played, "Year of Plenty fails if the bank cannot supply both chosen cards")
+	_runner.assert_eq(player.resources[PlayerData.RES_ORE], 0,
+		"Failed Year of Plenty does not grant a partial resource payout")
+
+
+func _test_dev_supply_view_tracks_remaining_and_revealed_cards() -> void:
+	var state := _make_state()
+	state.dev_deck = [DevCards.Type.YEAR_OF_PLENTY, DevCards.Type.VP]
+	state.debug_take_dev_card(0, DevCards.Type.VP)
+
+	var view: Dictionary = state.get_dev_supply_view()
+	var remaining: Dictionary = view.get("remaining_counts", {})
+	var revealed: Dictionary = view.get("revealed_counts", {})
+
+	_runner.assert_eq(view.get("remaining_total", -1), 1,
+		"Dev supply view reports the remaining deck size")
+	_runner.assert_eq(remaining.get(DevCards.Type.VP, -1), 0,
+		"Dev supply view removes revealed VP cards from the remaining counts")
+	_runner.assert_eq(revealed.get(DevCards.Type.VP, -1), 1,
+		"Dev supply view tracks revealed dev cards by type")
 
 
 func _test_bank_trade() -> void:
@@ -429,14 +530,66 @@ func _test_resource_collection() -> void:
 	var before: int = p.resources.get(PlayerData.RES_LUMBER, 0)
 
 	# Roll 6 → Forest produces Lumber
-	state._collect_resources(6)
+	state.collect_resources_for_roll(6)
 	_runner.assert_eq(p.resources[PlayerData.RES_LUMBER], before + 1,
 		"Roll 6 on Forest tile gives +1 Lumber")
 
 	# Roll 5 → no production (Forest has token 6)
-	state._collect_resources(5)
+	state.collect_resources_for_roll(5)
 	_runner.assert_eq(p.resources[PlayerData.RES_LUMBER], before + 1,
 		"Roll 5 on Forest(6) tile gives no Lumber")
+
+
+func _test_resource_payout_signal_tracks_exact_sources() -> void:
+	var state := _make_state()
+	state.tile_data = {
+		"0,0": {
+			"terrain": BoardGen.TerrainType.HILLS,
+			"number": 8,
+			"center": HexGrid.axial_to_world(0, 0),
+			"q": 0, "r": 0, "area": null,
+		},
+		"2,0": {
+			"terrain": BoardGen.TerrainType.PASTURE,
+			"number": 8,
+			"center": HexGrid.axial_to_world(2, 0),
+			"q": 2, "r": 0, "area": null,
+		},
+	}
+	state.robber_tile_key = "9,9"
+
+	var payouts_seen: Array = []
+	state.resource_payouts_generated.connect(func(payouts: Array) -> void:
+		payouts_seen.clear()
+		payouts_seen.append_array(payouts.duplicate(true))
+	)
+
+	var p0: RefCounted = state.players[0]
+	p0.settlement_positions.append(Vector3(
+		state.tile_data["0,0"].center.x + HexGrid.HEX_SIZE, 0.15, state.tile_data["0,0"].center.z))
+	var city_pos := Vector3(
+		state.tile_data["2,0"].center.x + HexGrid.HEX_SIZE, 0.15, state.tile_data["2,0"].center.z)
+	p0.settlement_positions.append(city_pos)
+	p0.city_positions.append(city_pos)
+
+	state.collect_resources_for_roll(8)
+
+	_runner.assert_eq(payouts_seen.size(), 2,
+		"Payout signal emits one entry per paying tile and player")
+	_runner.assert_eq(payouts_seen[0].tile_key, "0,0",
+		"Payout signal keeps the exact brick tile key")
+	_runner.assert_eq(payouts_seen[0].resource, PlayerData.RES_BRICK,
+		"Payout signal keeps the exact brick resource type")
+	_runner.assert_eq(payouts_seen[0].amount, 1,
+		"Payout signal records single-settlement payout amount")
+	_runner.assert_eq(payouts_seen[1].tile_key, "2,0",
+		"Payout signal keeps the exact wool tile key")
+	_runner.assert_eq(payouts_seen[1].resource, PlayerData.RES_WOOL,
+		"Payout signal keeps the exact wool resource type")
+	_runner.assert_eq(payouts_seen[1].amount, 2,
+		"Payout signal records city payout amount")
+	_runner.assert_eq(payouts_seen[1].roll, 8,
+		"Payout signal records the triggering dice roll")
 
 
 # ---------------------------------------------------------------
@@ -451,7 +604,7 @@ func _test_port_generic_rate() -> void:
 	var harbor: Dictionary = HexGrid.HARBORS[0]
 	p.settlement_positions.append(Vector3(harbor["v1x"], 0.15, harbor["v1z"]))
 	p.resources[PlayerData.RES_LUMBER] = 3   # can now trade 3 Lumber
-	var rate: int = state._get_trade_rate(p, PlayerData.RES_LUMBER)
+	var rate: int = state.get_trade_rate_for(p, PlayerData.RES_LUMBER)
 	_runner.assert_eq(rate, 3, "Generic harbour gives 3:1 rate")
 
 
@@ -462,10 +615,10 @@ func _test_port_specific_rate() -> void:
 	# Harbour index 2: type=3 (Grain=RES_GRAIN), v1x=3.675, v1z=3.819
 	var harbor: Dictionary = HexGrid.HARBORS[2]
 	p.settlement_positions.append(Vector3(harbor["v1x"], 0.15, harbor["v1z"]))
-	var grain_rate: int = state._get_trade_rate(p, PlayerData.RES_GRAIN)
+	var grain_rate: int = state.get_trade_rate_for(p, PlayerData.RES_GRAIN)
 	_runner.assert_eq(grain_rate, 2, "Specific Grain harbour gives 2:1 for Grain")
 	# Other resources still at 4:1 (no generic port)
-	var lumber_rate: int = state._get_trade_rate(p, PlayerData.RES_LUMBER)
+	var lumber_rate: int = state.get_trade_rate_for(p, PlayerData.RES_LUMBER)
 	_runner.assert_eq(lumber_rate, 4, "Specific Grain harbour still 4:1 for Lumber")
 
 
@@ -474,7 +627,7 @@ func _test_port_no_rate_without_settlement() -> void:
 	var state := _make_state()
 	var p: RefCounted = state.players[0]
 	p.settlement_positions.append(Vector3(0, 0.15, 0))   # board centre — no harbour
-	var rate: int = state._get_trade_rate(p, PlayerData.RES_ORE)
+	var rate: int = state.get_trade_rate_for(p, PlayerData.RES_ORE)
 	_runner.assert_eq(rate, 4, "No harbour settlement → default 4:1")
 
 
@@ -583,3 +736,174 @@ func _test_move_robber_rejects_same_tile() -> void:
 		"Robber cannot stay on the same tile")
 	_runner.assert_eq(state.phase, GameState.Phase.ROBBER_MOVE,
 		"Same-tile robber move keeps the game in ROBBER_MOVE phase")
+
+
+func _test_get_robber_victims_returns_adjacent_opponents() -> void:
+	var state := _make_state_with_tile(0, 0, BoardGen.TerrainType.HILLS, 8)
+	state.current_player_index = 0
+	state.players[1].settlement_positions.append(Vector3(0.0, 0.15, 0.0))
+	state.players[0].settlement_positions.append(Vector3(4.0, 0.15, 0.0))
+
+	var victims: Array = state.get_robber_victims("0,0")
+	_runner.assert_eq(victims, [1],
+		"Robber victim query returns adjacent opponents only")
+
+
+func _test_get_hand_cards_expands_resource_counts() -> void:
+	var state := _make_state()
+	state.players[1].resources = {
+		PlayerData.RES_LUMBER: 2,
+		PlayerData.RES_BRICK: 1,
+		PlayerData.RES_WOOL: 0,
+		PlayerData.RES_GRAIN: 1,
+		PlayerData.RES_ORE: 0,
+	}
+
+	var cards: Array = state.get_hand_cards(1, false)
+	_runner.assert_eq(cards.size(), 4,
+		"Hand-card expansion returns one card per resource unit")
+	_runner.assert_eq(int(cards[0]["resource"]), PlayerData.RES_LUMBER,
+		"Hand-card expansion preserves resource identity")
+
+	var shuffled: Array = state.get_hand_cards(1, true)
+	_runner.assert_eq(shuffled.size(), 4,
+		"Shuffled hand-card expansion keeps the same total count")
+
+
+func _test_steal_specific_resource_transfers_exact_card() -> void:
+	var state := _make_state()
+	state.current_player_index = 0
+	state.players[1].resources[PlayerData.RES_WOOL] = 2
+
+	var stolen: bool = state.steal_specific_resource(1, PlayerData.RES_WOOL)
+
+	_runner.assert_true(stolen,
+		"Specific robber steal succeeds when the victim has that resource")
+	_runner.assert_eq(state.players[1].resources[PlayerData.RES_WOOL], 1,
+		"Specific robber steal removes exactly one matching card from the victim")
+	_runner.assert_eq(state.players[0].resources[PlayerData.RES_WOOL], 1,
+		"Specific robber steal transfers the exact resource to the current player")
+
+
+func _test_scenario_setup_roll_robber_build_end_turn() -> void:
+	var state := _make_state()
+	state.tile_data = {
+		"0,0": {
+			"terrain": BoardGen.TerrainType.HILLS,
+			"number": 4,
+			"center": HexGrid.axial_to_world(0, 0),
+			"q": 0, "r": 0, "area": null,
+		},
+		"1,0": {
+			"terrain": BoardGen.TerrainType.DESERT,
+			"number": 0,
+			"center": HexGrid.axial_to_world(1, 0),
+			"q": 1, "r": 0, "area": null,
+		},
+	}
+	state.robber_tile_key = "1,0"
+	state.init_setup()
+
+	var p0_spot := Vector3(0, 0.15, 0)
+	var p1_spot := Vector3(5, 0.15, 0)
+	var p0_road_end := Vector3(HexGrid.HEX_SIZE, 0.15, 0)
+	var p1_road_end := Vector3(5 + HexGrid.HEX_SIZE, 0.15, 0)
+
+	_runner.assert_true(state.can_place_setup_settlement_at(p0_spot),
+		"Scenario: setup starts with a legal settlement vertex")
+	state.setup_settlement_placed(p0_spot)
+	_runner.assert_true(state.can_place_setup_road_at(0, p0_spot, p0_road_end),
+		"Scenario: setup road becomes legal after placing the settlement")
+	state.try_place_road(state.players[0], 0, p0_spot, p0_road_end)
+	state.setup_road_placed()
+
+	state.setup_settlement_placed(p1_spot)
+	state.try_place_road(state.players[1], 1, p1_spot, p1_road_end)
+	state.setup_road_placed()
+
+	state.setup_settlement_placed(Vector3(-5, 0.15, 0))
+	state.try_place_road(state.players[1], 1, Vector3(-5, 0.15, 0), Vector3(-5 - HexGrid.HEX_SIZE, 0.15, 0))
+	state.setup_road_placed()
+
+	state.setup_settlement_placed(Vector3(10, 0.15, 0))
+	state.try_place_road(state.players[0], 0, Vector3(10, 0.15, 0), Vector3(10 + HexGrid.HEX_SIZE, 0.15, 0))
+	state.setup_road_placed()
+
+	_runner.assert_eq(state.phase, GameState.Phase.ROLL,
+		"Scenario: setup completes into the roll phase")
+	_runner.assert_eq(state.current_player_index, 0,
+		"Scenario: Player 1 starts the main game after setup")
+
+	state.debug_collect(4)
+	_runner.assert_eq(state.players[0].resources.get(PlayerData.RES_BRICK, 0), 1,
+		"Scenario: matching roll pays the adjacent brick settlement")
+
+	state.phase = GameState.Phase.ROBBER_MOVE
+	_runner.assert_true(state.can_move_robber_to("0,0"),
+		"Scenario: robber can move onto a different valid tile")
+	state.move_robber("0,0")
+	_runner.assert_eq(state.phase, GameState.Phase.BUILD,
+		"Scenario: robber move returns the turn to build phase")
+
+	var build_pos := Vector3(HexGrid.HEX_SIZE * 2.0, 0.15, 0)
+	var p0: RefCounted = state.players[0]
+	state.roads.append({
+		"player_index": 0,
+		"v1": p0_road_end,
+		"v2": build_pos,
+	})
+	p0.resources = {0: 1, 1: 1, 2: 1, 3: 1, 4: 0}
+	_runner.assert_true(state.can_place_settlement_at(0, build_pos),
+		"Scenario: connected settlement location is legal in build phase")
+	_runner.assert_true(state.try_place_settlement(p0, build_pos),
+		"Scenario: build phase accepts the connected settlement")
+	state.end_turn()
+	_runner.assert_eq(state.phase, GameState.Phase.ROLL,
+		"Scenario: ending the turn returns the next player to roll phase")
+	_runner.assert_eq(state.current_player_index, 1,
+		"Scenario: turn passes to Player 2 after end_turn")
+
+
+func _test_scenario_bonus_transfer_flow() -> void:
+	var state := _make_state()
+	var p0: RefCounted = state.players[0]
+	var p1: RefCounted = state.players[1]
+
+	p0.settlement_positions.append(Vector3(0, 0.15, 0))
+	p1.settlement_positions.append(Vector3(10, 0.15, 0))
+	for i in range(5):
+		state.roads.append({
+			"player_index": 0,
+			"v1": Vector3(i, 0.15, 0),
+			"v2": Vector3(i + 1, 0.15, 0),
+		})
+	state.update_longest_road()
+	_runner.assert_eq(state.longest_road_holder, 0,
+		"Scenario: Player 1 takes Longest Road first")
+
+	for i in range(6):
+		state.roads.append({
+			"player_index": 1,
+			"v1": Vector3(10 + i, 0.15, 0),
+			"v2": Vector3(11 + i, 0.15, 0),
+		})
+	state.update_longest_road()
+	_runner.assert_eq(state.longest_road_holder, 1,
+		"Scenario: Longest Road transfers when Player 2 exceeds the path length")
+
+	p0.dev_cards = [0, 0, 0]
+	p1.dev_cards = [0, 0, 0, 0]
+	state.robber_tile_key = "0,0"
+	for _i in range(3):
+		state.phase = GameState.Phase.BUILD
+		state.dev_cards_played_this_turn = 0
+		state.play_knight(p0, 0)
+	_runner.assert_eq(state.largest_army_holder, 0,
+		"Scenario: Player 1 takes Largest Army at three knights")
+
+	for _i in range(4):
+		state.phase = GameState.Phase.BUILD
+		state.dev_cards_played_this_turn = 0
+		state.play_knight(p1, 1)
+	_runner.assert_eq(state.largest_army_holder, 1,
+		"Scenario: Largest Army transfers when Player 2 plays the fourth knight")

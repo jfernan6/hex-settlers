@@ -12,6 +12,7 @@ var v2: Vector3  # second endpoint vertex position
 var is_occupied: bool = false
 var owner_index: int = -1
 var is_emphasized: bool = false
+var _affordance_mode: String = "inactive"
 
 var _mat: StandardMaterial3D
 var _mesh_instance: MeshInstance3D
@@ -65,7 +66,7 @@ func _on_hover_start() -> void:
 
 func _on_hover_end() -> void:
 	if not is_occupied:
-		set_affordance("legal" if is_emphasized else "neutral")
+		set_affordance(_affordance_mode)
 
 
 ## Place a road here for a player.
@@ -79,6 +80,7 @@ func occupy(player_color: Color, p_owner_index: int) -> void:
 
 
 func set_affordance(mode: String, accent: Color = Color.WHITE) -> void:
+	_affordance_mode = mode
 	is_emphasized = false
 	if is_occupied:
 		if mode == "owned":
@@ -87,15 +89,24 @@ func set_affordance(mode: String, accent: Color = Color.WHITE) -> void:
 		return
 
 	match mode:
-		"legal":
+		"setup_legal":
 			is_emphasized = true
 			_mat.albedo_color = Color(0.74, 0.90, 1.0)
 			_mat.emission = Color(0.34, 0.62, 1.0)
 			_mat.emission_energy_multiplier = 0.95
+		"build_legal":
+			is_emphasized = true
+			_mat.albedo_color = Color(0.54, 0.94, 0.76)
+			_mat.emission = Color(0.16, 0.86, 0.56)
+			_mat.emission_energy_multiplier = 1.05
 		"candidate":
-			_mat.albedo_color = Color(0.42, 0.54, 0.68)
-			_mat.emission = Color(0.18, 0.24, 0.38)
-			_mat.emission_energy_multiplier = 0.35
+			_mat.albedo_color = Color(0.62, 0.58, 0.40)
+			_mat.emission = Color(0.42, 0.32, 0.10)
+			_mat.emission_energy_multiplier = 0.42
+		"inactive":
+			_mat.albedo_color = Color(0.34, 0.39, 0.48)
+			_mat.emission = Color(0.10, 0.14, 0.20)
+			_mat.emission_energy_multiplier = 0.10
 		_:
 			_mat.albedo_color = Color(0.7, 0.75, 0.85)
 			_mat.emission = Color(0.3, 0.35, 0.5)

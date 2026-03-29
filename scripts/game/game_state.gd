@@ -28,6 +28,7 @@ const ROAD_COST    := {PlayerData.RES_LUMBER: 1, PlayerData.RES_BRICK: 1}
 const CITY_COST    := {PlayerData.RES_GRAIN: 2, PlayerData.RES_ORE: 3}
 const DEV_COST     := {PlayerData.RES_ORE: 1, PlayerData.RES_GRAIN: 1, PlayerData.RES_WOOL: 1}
 const PROX         := HexGrid.HEX_SIZE * 1.15  # adjacency radius
+const RESOURCE_BANK_START := 19
 
 var players: Array = []
 var current_player_index: int = 0
@@ -36,6 +37,8 @@ var last_roll: int = 0
 var winner_index: int = -1
 var tile_data: Dictionary = {}        # "q,r" -> {terrain, number, center, area}
 var robber_tile_key: String = ""      # "q,r" of tile holding the robber
+var robber_pick_pending: bool = false
+var resource_bank: Dictionary = {}
 
 # Setup state machine
 var setup_sub_phase: int = SetupSubPhase.PLACE_SETTLEMENT
@@ -72,6 +75,7 @@ signal resource_payouts_generated(payouts)
 # --- Setup ---
 
 func init_players(num_players: int) -> void:
+	resource_bank = _new_resource_bank()
 	var colors := [
 		Color(0.85, 0.10, 0.10),
 		Color(0.15, 0.25, 0.90),
@@ -166,8 +170,7 @@ func _collect_starting_resources(player: RefCounted, settlement_pos: Vector3) ->
 			continue  # desert
 		if _dist_xz(settlement_pos, tile.center) < PROX:
 			var res := _terrain_to_resource(tile.terrain)
-			if res >= 0:
-				player.add_resource(res)
+			if res >= 0 and _take_from_bank(player, res, 1):
 				collected += 1
 	Log.info("[SETUP] %s receives %d starting resource(s) from 2nd settlement" % [
 		player.player_name, collected])
@@ -181,6 +184,264 @@ func current_player() -> RefCounted:
 
 func phase_name() -> String:
 	return PHASE_NAMES.get(phase, "UNKNOWN")
+
+
+func get_player(player_idx: int) -> RefCounted:
+	if player_idx < 0 or player_idx >= players.size():
+		return null
+	return players[player_idx]
+
+
+func get_resource_bank_view() -> Dictionary:
+	return resource_bank.duplicate(true)
+
+
+func get_dev_deck_counts_view() -> Dictionary:
+	var counts: Dictionary = {}
+	for card_type in DevCards.COUNTS:
+		counts[card_type] = 0
+	for card_type in dev_deck:
+		counts[card_type] = counts.get(card_type, 0) + 1
+	return counts
+
+
+func get_resource_hand_view(player_idx: int) -> Array:
+	var player := get_player(player_idx)
+	var view: Array = []
+	if player == null:
+		return view
+	for resource in [PlayerData.RES_LUMBER, PlayerData.RES_BRICK, PlayerData.RES_WOOL, PlayerData.RES_GRAIN, PlayerData.RES_ORE]:
+		view.append({
+			"resource": resource,
+			"count": int(player.resources.get(resource, 0)),
+		})
+	return view
+
+
+func get_dev_hand_view(player_idx: int, include_revealed: bool = false) -> Array:
+	var player := get_player(player_idx)
+	var cards: Array = []
+	if player == null:
+		return cards
+	var source: Array = player.revealed_dev_cards if include_revealed else player.dev_cards
+	var counts: Dictionary = {}
+	for card_type in source:
+		counts[card_type] = counts.get(card_type, 0) + 1
+	for card_type in [DevCards.Type.KNIGHT, DevCards.Type.ROAD_BUILDING,
+			DevCards.Type.YEAR_OF_PLENTY, DevCards.Type.MONOPOLY, DevCards.Type.VP]:
+		var count: int = int(counts.get(card_type, 0))
+		if count <= 0:
+			continue
+		cards.append({
+			"card_type": card_type,
+			"count": count,
+		})
+	return cards
+
+
+func get_revealed_dev_hand_view(player_idx: int) -> Array:
+	return get_dev_hand_view(player_idx, true)
+
+
+func get_dev_supply_view() -> Dictionary:
+	var revealed_counts: Dictionary = {}
+	for card_type in DevCards.COUNTS:
+		revealed_counts[card_type] = 0
+	for player in players:
+		for card_type in player.revealed_dev_cards:
+			revealed_counts[card_type] = revealed_counts.get(card_type, 0) + 1
+	return {
+		"remaining_total": dev_deck.size(),
+		"remaining_counts": get_dev_deck_counts_view(),
+		"revealed_counts": revealed_counts,
+	}
+
+
+func passes_distance_rule(pos: Vector3) -> bool:
+	return _respects_distance_rule(pos)
+
+
+func is_city_for_player_at(player_idx: int, pos: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	return _is_city_at(player, pos)
+
+
+func can_move_robber_to(tile_key: String) -> bool:
+	if phase != Phase.ROBBER_MOVE:
+		return false
+	if tile_key not in tile_data:
+		return false
+	return tile_key != robber_tile_key
+
+
+func get_robber_victims(tile_key: String) -> Array:
+	var victims: Array = []
+	if tile_key not in tile_data:
+		return victims
+	var center: Vector3 = tile_data[tile_key].center
+	for i in range(players.size()):
+		if i == current_player_index:
+			continue
+		for spos in players[i].settlement_positions:
+			if _dist_xz(spos, center) < PROX:
+				victims.append(i)
+				break
+	return victims
+
+
+func get_hand_cards(player_idx: int, shuffled: bool = false) -> Array:
+	var player := get_player(player_idx)
+	var cards: Array = []
+	if player == null:
+		return cards
+	for resource in [PlayerData.RES_LUMBER, PlayerData.RES_BRICK, PlayerData.RES_WOOL, PlayerData.RES_GRAIN, PlayerData.RES_ORE]:
+		var count: int = int(player.resources.get(resource, 0))
+		for copy_index in range(count):
+			cards.append({
+				"resource": resource,
+				"card_id": "%d_%d" % [resource, copy_index],
+			})
+	if shuffled:
+		cards.shuffle()
+	return cards
+
+
+func complete_robber_phase() -> void:
+	robber_pick_pending = false
+	if phase == Phase.ROBBER_MOVE:
+		phase = Phase.BUILD
+
+
+func steal_specific_resource(victim_idx: int, resource: int) -> bool:
+	if victim_idx < 0 or victim_idx >= players.size():
+		return false
+	if victim_idx == current_player_index:
+		return false
+	var victim: RefCounted = players[victim_idx]
+	if victim.resources.get(resource, 0) <= 0:
+		return false
+	victim.resources[resource] -= 1
+	current_player().add_resource(resource)
+	Log.info("[GAME] %s stole 1 %s from %s" % [
+		current_player().player_name, PlayerData.RES_NAMES[resource], victim.player_name])
+	GameEvents.record(GameEvents.EventType.RESOURCE_STOLEN, current_player().player_name,
+		{"resource": PlayerData.RES_NAMES[resource], "from": victim.player_name})
+	return true
+
+
+func can_place_setup_settlement_at(pos: Vector3) -> bool:
+	return phase == Phase.SETUP and setup_sub_phase == SetupSubPhase.PLACE_SETTLEMENT and _respects_distance_rule(pos)
+
+
+func can_place_settlement_at(player_idx: int, pos: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.BUILD:
+		return false
+	if not player.can_build_settlement():
+		return false
+	if not _respects_distance_rule(pos):
+		return false
+	return can_connect_settlement_at(player_idx, pos)
+
+
+func can_connect_settlement_at(player_idx: int, pos: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.BUILD:
+		return false
+	if not _respects_distance_rule(pos):
+		return false
+	return _has_connected_road_for_settlement(player, pos)
+
+
+func can_upgrade_city_at(player_idx: int, pos: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.BUILD:
+		return false
+	if player.city_positions.size() >= MAX_CITIES:
+		return false
+	if not _has_settlement_at(player, pos):
+		return false
+	if _is_city_at(player, pos):
+		return false
+	return _has_resources(player, CITY_COST)
+
+
+func can_place_setup_road_at(player_idx: int, v1: Vector3, v2: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.SETUP or setup_sub_phase != SetupSubPhase.PLACE_ROAD:
+		return false
+	if _road_exists(v1, v2):
+		return false
+	return _road_is_connected(player, player_idx, v1, v2)
+
+
+func can_connect_road_at(player_idx: int, v1: Vector3, v2: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.BUILD:
+		return false
+	if _road_exists(v1, v2):
+		return false
+	var player_road_count: int = roads.filter(func(r): return r.player_index == player_idx).size()
+	if player_road_count >= MAX_ROADS:
+		return false
+	return _road_is_connected(player, player_idx, v1, v2)
+
+
+func can_place_road_at(player_idx: int, v1: Vector3, v2: Vector3) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.BUILD:
+		return false
+	if not can_connect_road_at(player_idx, v1, v2):
+		return false
+	var free: bool = player.free_roads > 0
+	if not free and not _has_resources(player, ROAD_COST):
+		return false
+	return true
+
+
+func can_buy_dev_card_for(player_idx: int) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	if phase != Phase.BUILD:
+		return false
+	if dev_deck.is_empty():
+		return false
+	return _has_resources(player, DEV_COST)
+
+
+func force_check_win() -> void:
+	_check_win()
+
+
+func check_win() -> void:
+	_check_win()
+
+
+func apply_robber_discard() -> void:
+	_apply_robber_discard()
+
+
+func collect_resources_for_roll(roll: int) -> void:
+	_collect_resources(roll)
+
+
+func get_trade_rate_for(player: RefCounted, give_res: int) -> int:
+	return _get_trade_rate(player, give_res)
 
 
 # --- Dice ---
@@ -197,6 +458,7 @@ func roll_dice() -> int:
 	if last_roll == 7:
 		print("[GAME] Rolled 7 — robber must move!")
 		_apply_robber_discard()  # Players with 8+ cards must discard half
+		robber_pick_pending = false
 		phase = Phase.ROBBER_MOVE
 	else:
 		_collect_resources(last_roll)
@@ -229,6 +491,7 @@ func _apply_robber_discard() -> void:
 				if max_amt <= 0:
 					break
 				p.resources[max_r] -= 1
+				_return_to_bank(max_r, 1)
 				discarded += 1
 			Log.info("[GAME] %s had %d cards — discarded %d (robber rule)" % [
 				p.player_name, total, discarded])
@@ -239,6 +502,7 @@ func _apply_robber_discard() -> void:
 func _collect_resources(roll: int) -> void:
 	var total := 0
 	var payouts: Array = []
+	var pending_by_resource: Dictionary = {}
 	for key in tile_data:
 		if key == robber_tile_key:
 			continue  # robber blocks production
@@ -256,9 +520,9 @@ func _collect_resources(roll: int) -> void:
 				if _dist_xz(spos, center) < PROX:
 					multiplier += 2 if _is_city_at(p, spos) else 1
 			if multiplier > 0:
-				p.add_resource(res, multiplier)
-				total += multiplier
-				payouts.append({
+				if res not in pending_by_resource:
+					pending_by_resource[res] = []
+				pending_by_resource[res].append({
 					"player_index": player_index,
 					"resource": res,
 					"amount": multiplier,
@@ -267,6 +531,20 @@ func _collect_resources(roll: int) -> void:
 					"terrain": tile.terrain,
 					"roll": roll,
 				})
+	for res in pending_by_resource:
+		var pending: Array = pending_by_resource[res]
+		var total_needed := 0
+		for payout in pending:
+			total_needed += int(payout.amount)
+		if resource_bank.get(res, 0) < total_needed:
+			Log.warn("[GAME] Bank lacks %d %s for roll %d — no payouts of that resource" % [
+				total_needed, PlayerData.RES_NAMES[res], roll])
+			continue
+		for payout in pending:
+			var amount: int = int(payout.amount)
+			if _take_from_bank(players[int(payout.player_index)], res, amount):
+				total += amount
+				payouts.append(payout)
 	Log.debug("[GAME] Roll %d: %d total resources distributed" % [roll, total])
 	resource_payouts_generated.emit(payouts)
 	if total > 0:
@@ -299,56 +577,41 @@ func _terrain_to_resource(terrain: int) -> int:
 
 # --- Robber ---
 
-func move_robber(tile_key: String) -> void:
+func move_robber(tile_key: String, auto_resolve_steal: bool = true) -> bool:
 	if phase != Phase.ROBBER_MOVE:
-		return
+		return false
 	if tile_key not in tile_data:
 		Log.warn("[GAME] Ignoring invalid robber tile %s" % tile_key)
-		return
+		return false
 	if tile_key == robber_tile_key:
 		Log.warn("[GAME] Robber is already on %s" % tile_key)
-		return
+		return false
 	robber_tile_key = tile_key
+	robber_pick_pending = not auto_resolve_steal
 	Log.info("[GAME] Robber moved to %s" % tile_key)
 	GameEvents.record(GameEvents.EventType.ROBBER_MOVED, current_player().player_name,
 		{"tile": tile_key})
-	_try_steal_from_tile(tile_key)
-	phase = Phase.BUILD
+	if auto_resolve_steal:
+		_try_steal_from_tile(tile_key)
+		complete_robber_phase()
 	robber_moved.emit(tile_key)
+	return true
 
 
 func _try_steal_from_tile(tile_key: String) -> void:
-	if tile_key not in tile_data:
-		return
-	var center: Vector3 = tile_data[tile_key].center
 	var victims: Array = []
-	for i in players.size():
-		if i == current_player_index:
-			continue
-		for spos in players[i].settlement_positions:
-			if _dist_xz(spos, center) < PROX:
-				victims.append(i)
-				break
+	for victim_idx in get_robber_victims(tile_key):
+		if not get_hand_cards(victim_idx, false).is_empty():
+			victims.append(victim_idx)
 	if victims.is_empty():
 		print("[GAME] No opponents adjacent to robber tile — no steal")
 		return
 	var victim_idx: int = victims[randi() % victims.size()]
-	var victim: RefCounted = players[victim_idx]
-	# Steal a random resource the victim has
-	var available: Array = []
-	for r in victim.resources:
-		for _n in range(victim.resources[r]):
-			available.append(r)
+	var available: Array = get_hand_cards(victim_idx, true)
 	if available.is_empty():
-		print("[GAME] Victim %s has no resources to steal" % victim.player_name)
+		print("[GAME] Victim %s has no resources to steal" % players[victim_idx].player_name)
 		return
-	var stolen: int = available[randi() % available.size()]
-	victim.resources[stolen] -= 1
-	current_player().add_resource(stolen)
-	Log.info("[GAME] %s stole 1 %s from %s" % [
-		current_player().player_name, PlayerData.RES_NAMES[stolen], victim.player_name])
-	GameEvents.record(GameEvents.EventType.RESOURCE_STOLEN, current_player().player_name,
-		{"resource": PlayerData.RES_NAMES[stolen], "from": victim.player_name})
+	steal_specific_resource(victim_idx, int(available[0]["resource"]))
 
 
 # --- Settlements & cities ---
@@ -365,6 +628,7 @@ func try_place_settlement(player: RefCounted, pos: Vector3) -> bool:
 		print("[GAME] %s: settlement must connect to an existing road" % player.player_name)
 		return false
 	player.place_settlement(pos)
+	_return_resources_to_bank(PlayerData.SETTLEMENT_COST)
 	_check_win()
 	return true
 
@@ -468,17 +732,14 @@ func buy_dev_card(player: RefCounted) -> bool:
 		return false
 	_spend_resources(player, DEV_COST)
 	var card: int = dev_deck.pop_back()
+	_grant_dev_card_to_player(player, card, true)
 	if card == DevCards.Type.VP:
-		player.victory_points += 1
 		Log.info("[GAME] %s drew VP card — VP now %d  (deck: %d left)" % [
 			player.player_name, player.victory_points, dev_deck.size()])
 		GameEvents.record(GameEvents.EventType.DEV_CARD_BOUGHT, player.player_name,
 			{"card": "VP", "deck_left": dev_deck.size()})
 		_check_win()
 	else:
-		player.dev_cards.append(card)
-		# Sprint 2B: track so it can't be played this same turn
-		dev_cards_new_this_turn[card] = dev_cards_new_this_turn.get(card, 0) + 1
 		Log.info("[GAME] %s drew %s  (deck: %d left)" % [
 			player.player_name, DevCards.NAMES[card], dev_deck.size()])
 		GameEvents.record(GameEvents.EventType.DEV_CARD_BOUGHT, player.player_name,
@@ -513,12 +774,14 @@ func play_knight(player: RefCounted, player_idx: int) -> bool:
 	if not _can_play_card(player, DevCards.Type.KNIGHT):
 		return false
 	player.dev_cards.erase(DevCards.Type.KNIGHT)
+	player.revealed_dev_cards.append(DevCards.Type.KNIGHT)
 	player.knight_count += 1
 	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Knight (total knights: %d)" % [player.player_name, player.knight_count])
 	GameEvents.record(GameEvents.EventType.DEV_CARD_PLAYED, player.player_name,
 		{"card": "Knight", "knight_total": player.knight_count})
 	_check_largest_army()
+	robber_pick_pending = false
 	phase = Phase.ROBBER_MOVE
 	return true
 
@@ -527,6 +790,7 @@ func play_road_building(player: RefCounted) -> bool:
 	if not _can_play_card(player, DevCards.Type.ROAD_BUILDING):
 		return false
 	player.dev_cards.erase(DevCards.Type.ROAD_BUILDING)
+	player.revealed_dev_cards.append(DevCards.Type.ROAD_BUILDING)
 	player.free_roads += 2
 	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Road Building — 2 free roads granted" % player.player_name)
@@ -538,9 +802,19 @@ func play_road_building(player: RefCounted) -> bool:
 func play_year_of_plenty(player: RefCounted, res1: int, res2: int) -> bool:
 	if not _can_play_card(player, DevCards.Type.YEAR_OF_PLENTY):
 		return false
+	var requested := {
+		res1: 1,
+		res2: 1,
+	}
+	if res1 == res2:
+		requested[res1] = 2
+	if not _bank_can_supply(requested):
+		Log.warn("[GAME] Not enough bank supply for Year of Plenty")
+		return false
 	player.dev_cards.erase(DevCards.Type.YEAR_OF_PLENTY)
-	player.add_resource(res1)
-	player.add_resource(res2)
+	player.revealed_dev_cards.append(DevCards.Type.YEAR_OF_PLENTY)
+	_take_from_bank(player, res1, 1)
+	_take_from_bank(player, res2, 1)
 	dev_cards_played_this_turn += 1
 	print("[GAME] %s plays Year of Plenty: +1 %s +1 %s" % [
 		player.player_name, PlayerData.RES_NAMES[res1], PlayerData.RES_NAMES[res2]])
@@ -553,6 +827,7 @@ func play_monopoly(player: RefCounted, res: int) -> bool:
 	if not _can_play_card(player, DevCards.Type.MONOPOLY):
 		return false
 	player.dev_cards.erase(DevCards.Type.MONOPOLY)
+	player.revealed_dev_cards.append(DevCards.Type.MONOPOLY)
 	var total := 0
 	for p in players:
 		if p == player:
@@ -599,8 +874,12 @@ func bank_trade(player: RefCounted, give_res: int, recv_res: int) -> bool:
 		print("[GAME] %s cannot afford bank trade (%d %s needed)" % [
 			player.player_name, rate, PlayerData.RES_NAMES[give_res]])
 		return false
+	if resource_bank.get(recv_res, 0) < 1:
+		Log.warn("[GAME] Bank has no %s left for trade" % PlayerData.RES_NAMES[recv_res])
+		return false
 	player.resources[give_res] -= rate
-	player.add_resource(recv_res)
+	_return_to_bank(give_res, rate)
+	_take_from_bank(player, recv_res, 1)
 	Log.info("[GAME] %s bank trade: %d %s → 1 %s (rate %d:1)" % [
 		player.player_name, rate,
 		PlayerData.RES_NAMES[give_res], PlayerData.RES_NAMES[recv_res], rate])
@@ -781,6 +1060,95 @@ func _check_win() -> void:
 
 # --- Helpers ---
 
+func debug_adjust_resource(player_idx: int, res: int, amount: int) -> int:
+	var player := get_player(player_idx)
+	if player == null or amount == 0:
+		return 0
+	if amount > 0:
+		var granted: int = mini(amount, int(resource_bank.get(res, 0)))
+		if granted > 0:
+			_take_from_bank(player, res, granted)
+		return granted
+	var removed: int = mini(-amount, int(player.resources.get(res, 0)))
+	if removed > 0:
+		player.resources[res] -= removed
+		_return_to_bank(res, removed)
+	return -removed
+
+
+func debug_take_dev_card(player_idx: int, card_type: int) -> bool:
+	var player := get_player(player_idx)
+	if player == null:
+		return false
+	var deck_index: int = dev_deck.find(card_type)
+	if deck_index < 0:
+		return false
+	dev_deck.remove_at(deck_index)
+	_grant_dev_card_to_player(player, card_type, false)
+	if card_type == DevCards.Type.VP:
+		_check_win()
+	return true
+
+
+func debug_draw_dev_card(player_idx: int) -> bool:
+	var player := get_player(player_idx)
+	if player == null or dev_deck.is_empty():
+		return false
+	var card_type: int = dev_deck.pop_back()
+	_grant_dev_card_to_player(player, card_type, false)
+	if card_type == DevCards.Type.VP:
+		_check_win()
+	return true
+
+
+func _new_resource_bank() -> Dictionary:
+	return {
+		PlayerData.RES_LUMBER: RESOURCE_BANK_START,
+		PlayerData.RES_BRICK: RESOURCE_BANK_START,
+		PlayerData.RES_WOOL: RESOURCE_BANK_START,
+		PlayerData.RES_GRAIN: RESOURCE_BANK_START,
+		PlayerData.RES_ORE: RESOURCE_BANK_START,
+	}
+
+
+func _bank_can_supply(requested: Dictionary) -> bool:
+	for res in requested:
+		if int(resource_bank.get(res, 0)) < int(requested[res]):
+			return false
+	return true
+
+
+func _take_from_bank(player: RefCounted, res: int, amount: int) -> bool:
+	if amount <= 0:
+		return true
+	if int(resource_bank.get(res, 0)) < amount:
+		return false
+	resource_bank[res] = int(resource_bank.get(res, 0)) - amount
+	player.add_resource(res, amount)
+	return true
+
+
+func _return_to_bank(res: int, amount: int) -> void:
+	if amount <= 0:
+		return
+	resource_bank[res] = clampi(int(resource_bank.get(res, 0)) + amount, 0, RESOURCE_BANK_START)
+
+
+func _return_resources_to_bank(cost: Dictionary) -> void:
+	for res in cost:
+		_return_to_bank(int(res), int(cost[res]))
+
+
+func _grant_dev_card_to_player(player: RefCounted, card_type: int, mark_new_this_turn: bool) -> void:
+	if card_type == DevCards.Type.VP:
+		player.revealed_dev_cards.append(card_type)
+		player.victory_points += 1
+		return
+	player.dev_cards.append(card_type)
+	if mark_new_this_turn:
+		dev_cards_new_this_turn[card_type] = dev_cards_new_this_turn.get(card_type, 0) + 1
+
+
 func _has_resources(player: RefCounted, cost: Dictionary) -> bool:
 	for r in cost:
 		if player.resources.get(r, 0) < cost[r]:
@@ -791,6 +1159,7 @@ func _has_resources(player: RefCounted, cost: Dictionary) -> bool:
 func _spend_resources(player: RefCounted, cost: Dictionary) -> void:
 	for r in cost:
 		player.resources[r] -= cost[r]
+		_return_to_bank(r, int(cost[r]))
 
 
 func _has_settlement_at(player: RefCounted, pos: Vector3) -> bool:

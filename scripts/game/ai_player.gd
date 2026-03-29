@@ -22,7 +22,7 @@ static func pick_setup_vertex(vertex_slots: Array, tile_data: Dictionary, state 
 		if slot.is_occupied:
 			continue
 		# Enforce distance rule if state is provided
-		if state != null and not state._respects_distance_rule(slot.position):
+		if state != null and not state.passes_distance_rule(slot.position):
 			continue
 		var score := _vertex_pip_score(slot.position, tile_data)
 		if score > best_score:
@@ -140,7 +140,7 @@ static func _road_opens_settlement(road_slot: Object, vertex_slots: Array,
 	for slot in vertex_slots:
 		if slot.is_occupied:
 			continue
-		if not state._respects_distance_rule(slot.position):
+		if not state.passes_distance_rule(slot.position):
 			continue
 		if _dist(slot.position, v1) < 0.15 or _dist(slot.position, v2) < 0.15:
 			return true
@@ -152,7 +152,7 @@ static func _road_score(road_slot: Object, vertex_slots: Array, state: RefCounte
 	for slot in vertex_slots:
 		if slot.is_occupied:
 			continue
-		if not state._respects_distance_rule(slot.position):
+		if not state.passes_distance_rule(slot.position):
 			continue
 		if _dist(slot.position, road_slot.v1) >= 0.15 and _dist(slot.position, road_slot.v2) >= 0.15:
 			continue
@@ -185,7 +185,7 @@ static func _best_reachable_vertex(vertex_slots: Array, player: RefCounted,
 		if slot.is_occupied:
 			continue
 		# Must respect Catan distance rule
-		if not state._respects_distance_rule(slot.position):
+		if not state.passes_distance_rule(slot.position):
 			continue
 		# Must be adjacent to player's existing road
 		var reachable := false
@@ -236,6 +236,36 @@ static func most_needed_resource(player: RefCounted) -> int:
 	return need
 
 
+static func pick_monopoly_resource(state: RefCounted, player_idx: int) -> int:
+	var best_r := PlayerData.RES_LUMBER
+	var best_amt := -1
+	for r in [0, 1, 2, 3, 4]:
+		var total := 0
+		for i in state.players.size():
+			if i != player_idx:
+				total += state.players[i].resources.get(r, 0)
+		if total > best_amt:
+			best_amt = total
+			best_r = r
+	return best_r
+
+
+static func accepts_trade(ai_player, offer: Dictionary, want: Dictionary) -> bool:
+	for r in want:
+		if ai_player.resources.get(r, 0) < want[r]:
+			return false
+
+	var gain_value := 0
+	for r in offer:
+		gain_value += offer[r] * (5 - ai_player.resources.get(r, 0))
+
+	var cost_value := 0
+	for r in want:
+		cost_value += want[r] * (1 + ai_player.resources.get(r, 0))
+
+	return gain_value >= cost_value
+
+
 # ---------------------------------------------------------------
 # Robber placement (called during ROBBER_MOVE phase)
 # ---------------------------------------------------------------
@@ -258,7 +288,7 @@ static func pick_robber_tile(state: RefCounted, player_idx: int) -> String:
 				continue
 			for spos in state.players[i].settlement_positions:
 				if _dist(spos, center) < state.PROX:
-					score += 2 if state._is_city_at(state.players[i], spos) else 1
+					score += 2 if state.is_city_for_player_at(i, spos) else 1
 		# Weight by tile production value
 		score *= (6 - abs(7 - tile.number))
 		if score > best_score:

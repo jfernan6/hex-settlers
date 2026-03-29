@@ -25,6 +25,7 @@ var free_placements_left: int = 0  # legacy — setup now managed by game_state.
 
 # Development cards
 var dev_cards: Array = []   # Array of DevCards.Type ints (playable hand)
+var revealed_dev_cards: Array = []  # face-up played/revealed dev cards for UI + deck accounting
 var knight_count: int = 0   # total knights played (for Largest Army tracking)
 var free_roads: int = 0     # free roads remaining from Road Building card
 
@@ -40,6 +41,7 @@ func _init(p_name: String, p_color: Color) -> void:
 	settlement_positions = []
 	city_positions       = []
 	dev_cards            = []
+	revealed_dev_cards   = []
 	knight_count         = 0
 	free_roads           = 0
 
@@ -95,12 +97,12 @@ func resource_summary() -> String:
 
 func debug_summary() -> String:
 	var card_str := "cards:%d" % dev_cards.size()
-	return "[%s%s] VP:%d  Free:%d  Res:%s  S:%d  %s  KN:%d" % [
+	return "[%s%s] VP:%d  Free:%d  Res:%s  S:%d  %s  KN:%d  Rev:%d" % [
 		player_name,
 		" (AI)" if is_ai else "",
 		victory_points, free_placements_left,
 		_short_resources(), settlement_positions.size(),
-		card_str, knight_count]
+		card_str, knight_count, revealed_dev_cards.size()]
 
 
 func _short_resources() -> String:

@@ -10,6 +10,7 @@ var is_occupied: bool = false
 var is_city: bool = false
 var owner_index: int = -1
 var is_emphasized: bool = false
+var _affordance_mode: String = "inactive"
 
 var _mat_disc: StandardMaterial3D
 var _mat_body: StandardMaterial3D
@@ -109,7 +110,7 @@ func _on_hover_start() -> void:
 
 func _on_hover_end() -> void:
 	if not is_occupied:
-		set_affordance("legal" if is_emphasized else "neutral")
+		set_affordance(_affordance_mode)
 
 
 # ---------------------------------------------------------------
@@ -206,6 +207,7 @@ func _apply_color(color: Color, city: bool) -> void:
 
 
 func set_affordance(mode: String, accent: Color = Color.WHITE) -> void:
+	_affordance_mode = mode
 	is_emphasized = false
 	_set_owner_highlight(false, accent)
 
@@ -219,15 +221,24 @@ func set_affordance(mode: String, accent: Color = Color.WHITE) -> void:
 		return
 
 	match mode:
-		"legal":
+		"setup_legal":
 			is_emphasized = true
 			_mat_disc.albedo_color = Color(1.0, 0.92, 0.38)
 			_mat_disc.emission = Color(0.98, 0.77, 0.18)
 			_mat_disc.emission_energy_multiplier = 1.15
+		"build_legal":
+			is_emphasized = true
+			_mat_disc.albedo_color = Color(0.70, 0.96, 0.86)
+			_mat_disc.emission = Color(0.20, 0.92, 0.68)
+			_mat_disc.emission_energy_multiplier = 1.18
 		"blocked":
 			_mat_disc.albedo_color = Color(0.48, 0.32, 0.30)
 			_mat_disc.emission = Color(0.30, 0.12, 0.10)
 			_mat_disc.emission_energy_multiplier = 0.12
+		"inactive":
+			_mat_disc.albedo_color = Color(0.34, 0.38, 0.46)
+			_mat_disc.emission = Color(0.08, 0.12, 0.16)
+			_mat_disc.emission_energy_multiplier = 0.06
 		_:
 			_mat_disc.albedo_color = Color(1.0, 0.98, 0.85)
 			_mat_disc.emission = Color(0.9, 0.85, 0.5)
